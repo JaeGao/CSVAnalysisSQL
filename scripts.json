@@ -1,0 +1,3 @@
+{
+    "Example: Grand Total Store Sales": "SELECT \n  Store,\n  COUNT(*) as Rows,\n  SUM(CAST(\"Qty Sold\" AS DOUBLE)) as Qty,\n  SUM(CAST(\"Qty Sold\" AS DOUBLE) * CAST(Price AS DOUBLE)) as \"Total Price\",\n  SUM(CASE WHEN CAST(\"Qty Sold\" AS DOUBLE) * CAST(Price AS DOUBLE) < 0 THEN CAST(\"Qty Sold\" AS DOUBLE) * CAST(Price AS DOUBLE) ELSE 0 END) as \"Neg Total\"\nFROM dataset\nGROUP BY ROLLUP(Store)\nORDER BY Store"
+}
