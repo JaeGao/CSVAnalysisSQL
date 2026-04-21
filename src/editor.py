@@ -35,9 +35,7 @@ class SQLEditor(QPlainTextEdit):
                 e.ignore()
                 return
 
-        isShortcut = (e.modifiers() & Qt.KeyboardModifier.ControlModifier) and e.key() == Qt.Key.Key_Space
-        if not self.completer or not isShortcut:
-            super().keyPressEvent(e)
+        super().keyPressEvent(e)
 
         ctrlOrShift = e.modifiers() & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier)
         if not self.completer or (ctrlOrShift and not e.text()):
@@ -46,7 +44,7 @@ class SQLEditor(QPlainTextEdit):
         hasModifier = (e.modifiers() != Qt.KeyboardModifier.NoModifier) and not ctrlOrShift
         completionPrefix = self.textUnderCursor()
 
-        if not isShortcut and (hasModifier or not e.text() or len(completionPrefix) < 1):
+        if hasModifier or not e.text() or len(completionPrefix) < 1:
             self.completer.popup().hide()
             return
 

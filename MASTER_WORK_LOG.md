@@ -59,7 +59,20 @@ During development, several critical bottlenecks and crashes were encountered. H
 
 ---
 
-## 3. Performance Optimizations
+## 3. UI/UX and Quality of Life Enhancements
+
+The application prioritizes user experience and rapid iteration through several key features:
+- **Advanced SQL Toolbar**: Removed basic SQL snippet buttons in favor of robust utilities:
+  - **Format**: Leverages `sqlparse` to prettify complex, nested queries instantly.
+  - **Query History**: Automatically tracks successful queries during a session in a dropdown, allowing rapid iteration without losing work.
+  - **Save as View**: Immediately creates a virtual table (`CREATE OR REPLACE VIEW`) from the current query and loads it into the schema tree for downstream analysis.
+- **Smart Autocomplete**: The `SQLEditor` continuously provides context-aware autocomplete suggestions (columns, tables, SQL keywords) dynamically as the user types, completely removing the need for manual hotkeys like `Ctrl+Space`.
+- **Dynamic Layouts**: The `Schema Tree` enforces a clean `60/40` width ratio between the "Column Name" and "Type" headers. This ratio is dynamically recalculated via `resizeEvent` whenever the side panel is adjusted.
+- **Contextual Actions**: Right-clicking columns in the Schema Tree allows for one-click copying of exact column names directly to the clipboard.
+
+---
+
+## 4. Performance Optimizations
 
 Beyond crash prevention, the following systemic optimizations exist:
 - **OLAP Engine:** DuckDB's columnar layout evaluates analytical queries (like `GROUP BY` and `SUM`) exponentially faster than row-based databases like SQLite.
@@ -68,7 +81,7 @@ Beyond crash prevention, the following systemic optimizations exist:
 
 ---
 
-## 4. Distribution and CI/CD
+## 5. Distribution and CI/CD
 
 To ensure seamless distribution across operating systems, the project utilizes:
 - **PyInstaller:** Configured via `build.bat` and `build.sh` to package the application as a standalone, single-file executable `--onefile` with no console `--noconsole`.
@@ -77,7 +90,7 @@ To ensure seamless distribution across operating systems, the project utilizes:
 
 ---
 
-## 5. Development Guidelines
+## 6. Development Guidelines
 
 To prevent regressions, adhere to the following rules when modifying this codebase:
 

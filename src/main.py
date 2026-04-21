@@ -2,6 +2,7 @@ import sys
 import os
 import glob
 import json
+import sqlparse
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QComboBox, QPushButton, QLabel, QTableView, QHeaderView,
@@ -119,8 +120,12 @@ class MainWindow(QMainWindow):
         self.schema_tree.header().setStretchLastSection(True)
         self.schema_tree.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
         self.schema_tree.header().setSectionResizeMode(1, QHeaderView.ResizeMode.Interactive)
-        self.schema_tree.setColumnWidth(0, 200)
-        self.schema_tree.setColumnWidth(1, 100)
+        
+        original_resize = self.schema_tree.resizeEvent
+        def schema_resize(event):
+            original_resize(event)
+            self.schema_tree.setColumnWidth(0, int(self.schema_tree.viewport().width() * 0.60))
+        self.schema_tree.resizeEvent = schema_resize
         self.schema_tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.schema_tree.customContextMenuRequested.connect(self.show_schema_context_menu)
         schema_layout.addWidget(self.schema_tree)
@@ -172,27 +177,36 @@ class MainWindow(QMainWindow):
         
         # Editor Toolbar
         toolbar_layout = QHBoxLayout()
-        toolbar_layout.addWidget(QLabel("SQL Editor:"))
+        toolbar_layout.addWidget(QLabel("History:"))
         
-        # Snippets
-        snip_select = QPushButton("SELECT *")
-        snip_select.clicked.connect(lambda: self.sql_editor.insertPlainText("SELECT * FROM \n"))
-        snip_groupby = QPushButton("GROUP BY")
-        snip_groupby.clicked.connect(lambda: self.sql_editor.insertPlainText("GROUP BY "))
-        snip_sum = QPushButton("SUM()")
-        snip_sum.clicked.connect(lambda: self.sql_editor.insertPlainText("SUM()"))
-        snip_case = QPushButton("CASE WHEN")
-        snip_case.clicked.connect(lambda: self.sql_editor.insertPlainText("CASE WHEN condition THEN true_val ELSE false_val END"))
+        self.query_history = []
+        self.history_combo = QComboBox()
+        self.history_combo.setMinimumWidth(200)
+        self.history_combo.addItem("--- Recent Queries ---")
+        self.history_combo.currentIndexChanged.connect(self.load_history_item)
+        toolbar_layout.addWidget(self.history_combo)
         
-        toolbar_layout.addWidget(snip_select)
-        toolbar_layout.addWidget(snip_groupby)
-        toolbar_layout.addWidget(snip_sum)
-        toolbar_layout.addWidget(snip_case)
+        toolbar_layout.addSpacing(10)
+        
+        format_btn = QPushButton("Format")
+        format_btn.clicked.connect(self.format_sql)
+        clear_btn = QPushButton("Clear")
+        clear_btn.clicked.connect(self.clear_editor)
+        copy_btn = QPushButton("Copy")
+        copy_btn.clicked.connect(self.copy_query)
+        save_view_btn = QPushButton("Save View")
+        save_view_btn.clicked.connect(self.save_as_view)
+        
+        toolbar_layout.addWidget(format_btn)
+        toolbar_layout.addWidget(clear_btn)
+        toolbar_layout.addWidget(copy_btn)
+        toolbar_layout.addWidget(save_view_btn)
+        
         toolbar_layout.addStretch()
         right_layout.addLayout(toolbar_layout)
         
         self.sql_editor = SQLEditor()
-        self.sql_editor.setPlaceholderText("Write your SQL query here. Try Ctrl+Space for autocomplete.")
+        self.sql_editor.setPlaceholderText("Write your SQL query here.")
         font = QFont("Consolas", 12)
         self.sql_editor.setFont(font)
         right_layout.addWidget(self.sql_editor)
@@ -310,11 +324,22 @@ class MainWindow(QMainWindow):
 
     def show_schema_context_menu(self, position):
         item = self.schema_tree.itemAt(position)
-        if not item or item.parent() is not None:
+        if not item:
+            return
+            
+        menu = QMenu()
+        
+        if item.parent() is not None:
+            # It's a column
+            col_name = item.text(0)
+            copy_col_action = menu.addAction(f"Copy '{col_name}'")
+            action = menu.exec(self.schema_tree.mapToGlobal(position))
+            if action == copy_col_action:
+                QApplication.clipboard().setText(col_name)
+                self.status_label.setText(f"Copied column '{col_name}' to clipboard.")
             return
             
         table_name = item.text(0)
-        menu = QMenu()
         copy_action = menu.addAction("Copy Schema")
         remove_action = menu.addAction(f"Remove '{table_name}'")
         
@@ -399,6 +424,39 @@ class MainWindow(QMainWindow):
         words.sort()
         self.sql_editor.set_completions(words)
 
+    def load_history_item(self, index):
+        if index > 0 and index <= len(self.query_history):
+            self.sql_editor.setPlainText(self.query_history[index - 1])
+
+    def format_sql(self):
+        query = self.sql_editor.toPlainText().strip()
+        if query:
+            formatted = sqlparse.format(query, reindent=True, keyword_case='upper')
+            self.sql_editor.setPlainText(formatted)
+
+    def clear_editor(self):
+        self.sql_editor.clear()
+
+    def copy_query(self):
+        QApplication.clipboard().setText(self.sql_editor.toPlainText())
+        self.status_label.setText("Query copied to clipboard.")
+
+    def save_as_view(self):
+        query = self.sql_editor.toPlainText().strip()
+        if not query: return
+        
+        view_name, ok = QInputDialog.getText(self, "Save as View", "Enter view name:")
+        if ok and view_name:
+            view_name = self.db.sanitize_table_name(view_name)
+            try:
+                self.db.con.execute(f'CREATE OR REPLACE VIEW "{view_name}" AS {query}')
+                self.refresh_schema_tree()
+                self.status_label.setText(f"View '{view_name}' created successfully.")
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to create view: {e}")
+
+
+
     def execute_query(self):
         query = self.sql_editor.toPlainText().strip()
         if not query: return
@@ -420,6 +478,21 @@ class MainWindow(QMainWindow):
             # self.table_view.resizeColumnsToContents()
             
             self.status_label.setText(f"Query returned {total_rows} rows.")
+            
+            if not self.query_history or self.query_history[0] != query:
+                self.query_history.insert(0, query)
+                self.query_history = self.query_history[:20]
+                
+                self.history_combo.blockSignals(True)
+                self.history_combo.clear()
+                self.history_combo.addItem("--- Recent Queries ---")
+                for q in self.query_history:
+                    display_q = q.replace('\n', ' ')
+                    if len(display_q) > 40:
+                        display_q = display_q[:37] + "..."
+                    self.history_combo.addItem(display_q)
+                self.history_combo.blockSignals(False)
+                
         except Exception as e:
             QMessageBox.critical(self, "Query Error", str(e))
             self.status_label.setText("Error executing query.")
