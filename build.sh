@@ -21,7 +21,7 @@ echo ""
 # --noconsole   : No terminal window behind the GUI
 # --onefile     : Single executable output
 # --add-data    : Bundle the stylesheet (use : separator on Linux/Mac, ; on Windows)
-pyinstaller --noconsole --onefile --add-data "style.qss:." --name "CSV_Analyzer" main.py
+pyinstaller --noconsole --onefile --add-data "style.qss:." --add-data "grip_horizontal.png:." --add-data "grip_vertical.png:." --name "CSV_Analyzer" main.py
 
 echo ""
 echo "========================================="

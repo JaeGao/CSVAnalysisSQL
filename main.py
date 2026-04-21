@@ -37,7 +37,11 @@ class MainWindow(QMainWindow):
         # Load Stylesheet
         try:
             with open(resource_path("style.qss"), "r") as f:
-                self.setStyleSheet(f.read())
+                qss = f.read()
+            # Resolve relative image paths for PyInstaller compatibility
+            qss = qss.replace("url(grip_horizontal.png)", f"url({resource_path('grip_horizontal.png')})")
+            qss = qss.replace("url(grip_vertical.png)", f"url({resource_path('grip_vertical.png')})")
+            self.setStyleSheet(qss)
         except Exception as e:
             print(f"Could not load stylesheet: {e}")
             
@@ -87,34 +91,31 @@ class MainWindow(QMainWindow):
         left_layout = QVBoxLayout(left_pane)
         left_layout.setContentsMargins(0, 0, 0, 0)
         
-        # File selector
-        left_layout.addWidget(QLabel("1. Select Dataset:"))
-        file_layout = QHBoxLayout()
-        self.file_path_edit = QLineEdit()
-        self.file_path_edit.setReadOnly(True)
-        self.file_path_edit.setPlaceholderText("No CSV selected")
-        browse_btn = QPushButton("Browse")
-        browse_btn.clicked.connect(self.browse_file)
-        load_btn = QPushButton("Load")
-        load_btn.clicked.connect(self.load_dataset)
+        # File loader - single button
+        load_csv_btn = QPushButton("Load CSV")
+        load_csv_btn.clicked.connect(self.load_csv)
+        left_layout.addWidget(load_csv_btn)
         
-        file_layout.addWidget(self.file_path_edit)
-        file_layout.addWidget(browse_btn)
-        file_layout.addWidget(load_btn)
-        left_layout.addLayout(file_layout)
+        # Splitter between schema and saved scripts
+        left_splitter = QSplitter(Qt.Orientation.Vertical)
         
-        # Schema Viewer
-        left_layout.addWidget(QLabel("Database Schema:"))
+        # Schema section
+        schema_pane = QWidget()
+        schema_layout = QVBoxLayout(schema_pane)
+        schema_layout.setContentsMargins(0, 4, 0, 0)
+        
+        schema_layout.addWidget(QLabel("Database Schema:"))
         self.schema_tree = QTreeWidget()
         self.schema_tree.setHeaderLabels(["Column Name", "Type"])
         self.schema_tree.setAlternatingRowColors(True)
-        self.schema_tree.header().setStretchLastSection(False)
-        self.schema_tree.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.schema_tree.header().setStretchLastSection(True)
+        self.schema_tree.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
         self.schema_tree.header().setSectionResizeMode(1, QHeaderView.ResizeMode.Interactive)
+        self.schema_tree.setColumnWidth(0, 200)
         self.schema_tree.setColumnWidth(1, 100)
         self.schema_tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.schema_tree.customContextMenuRequested.connect(self.show_schema_context_menu)
-        left_layout.addWidget(self.schema_tree)
+        schema_layout.addWidget(self.schema_tree)
         
         schema_btn_layout = QHBoxLayout()
         self.copy_all_btn = QPushButton("Copy All Schemas")
@@ -123,14 +124,20 @@ class MainWindow(QMainWindow):
         self.remove_dataset_btn.clicked.connect(self.remove_selected_dataset)
         schema_btn_layout.addWidget(self.copy_all_btn)
         schema_btn_layout.addWidget(self.remove_dataset_btn)
-        left_layout.addLayout(schema_btn_layout)
+        schema_layout.addLayout(schema_btn_layout)
         
-        # Saved Scripts
-        left_layout.addWidget(QLabel("Saved Scripts:"))
+        left_splitter.addWidget(schema_pane)
+        
+        # Saved Scripts section
+        scripts_pane = QWidget()
+        scripts_layout = QVBoxLayout(scripts_pane)
+        scripts_layout.setContentsMargins(0, 4, 0, 0)
+        
+        scripts_layout.addWidget(QLabel("Saved Scripts:"))
         self.scripts_list = QListWidget()
         self.refresh_scripts_list()
         self.scripts_list.itemDoubleClicked.connect(self.load_script_to_editor)
-        left_layout.addWidget(self.scripts_list)
+        scripts_layout.addWidget(self.scripts_list)
         
         script_btn_layout = QHBoxLayout()
         save_script_btn = QPushButton("Save")
@@ -139,7 +146,14 @@ class MainWindow(QMainWindow):
         del_script_btn.clicked.connect(self.delete_current_script)
         script_btn_layout.addWidget(save_script_btn)
         script_btn_layout.addWidget(del_script_btn)
-        left_layout.addLayout(script_btn_layout)
+        scripts_layout.addLayout(script_btn_layout)
+        
+        left_splitter.addWidget(scripts_pane)
+        
+        left_splitter.setStretchFactor(0, 3)
+        left_splitter.setStretchFactor(1, 2)
+        
+        left_layout.addWidget(left_splitter)
         
         parent_splitter.addWidget(left_pane)
 
@@ -213,10 +227,19 @@ class MainWindow(QMainWindow):
         parent_splitter.setStretchFactor(0, 40)
         parent_splitter.setStretchFactor(1, 60)
 
-    def browse_file(self):
+    def load_csv(self):
         file_path, _ = QFileDialog.getOpenFileName(self, "Select CSV File", "", "CSV Files (*.csv);;All Files (*)")
-        if file_path:
-            self.file_path_edit.setText(file_path)
+        if not file_path:
+            return
+        
+        self.current_loading_file = os.path.basename(file_path)
+        self.loading_dots = 0
+        self.animate_loading_text()
+        self.loading_timer.start(400)
+        
+        worker = LoadWorker(self.db, file_path)
+        worker.signals.finished.connect(self._on_load_finished)
+        self.threadpool.start(worker)
 
     def refresh_scripts_list(self):
         self.scripts_list.clear()
@@ -247,19 +270,6 @@ class MainWindow(QMainWindow):
         name = item.text()
         if name in self.saved_scripts:
             self.sql_editor.setPlainText(self.saved_scripts[name])
-
-    def load_dataset(self):
-        file_path = self.file_path_edit.text()
-        if not file_path: return
-        
-        self.current_loading_file = os.path.basename(file_path)
-        self.loading_dots = 0
-        self.animate_loading_text()
-        self.loading_timer.start(400)
-        
-        worker = LoadWorker(self.db, file_path)
-        worker.signals.finished.connect(self._on_load_finished)
-        self.threadpool.start(worker)
 
     def animate_loading_text(self):
         self.loading_dots = (self.loading_dots + 1) % 4

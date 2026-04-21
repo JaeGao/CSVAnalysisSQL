@@ -31,13 +31,30 @@ class CSVDatabase:
 
     def load_csv(self, file_path):
         """
-        Creates a table from the CSV into memory.
-        This allows the user to simply query: SELECT * FROM table_name
+        Creates a table from the CSV file.
+        Uses ignore_errors so that values which do not match the auto-detected type
+        are set to NULL rather than aborting the load. Falls back to all VARCHAR
+        only if the file cannot be parsed at all.
         """
+        table_name = self.sanitize_table_name(file_path)
+        escaped_path = file_path.replace("'", "''")
+        
         try:
-            table_name = self.sanitize_table_name(file_path)
             self.con.execute(f"DROP TABLE IF EXISTS {table_name}")
-            self.con.execute(f"CREATE TABLE {table_name} AS SELECT * FROM read_csv_auto('{file_path}')")
+            self.con.execute(
+                f"CREATE TABLE {table_name} AS SELECT * FROM "
+                f"read_csv_auto('{escaped_path}', ignore_errors=true)"
+            )
+            return True, table_name
+        except Exception:
+            pass
+        
+        try:
+            self.con.execute(f"DROP TABLE IF EXISTS {table_name}")
+            self.con.execute(
+                f"CREATE TABLE {table_name} AS SELECT * FROM "
+                f"read_csv_auto('{escaped_path}', all_varchar=true)"
+            )
             return True, table_name
         except Exception as e:
             return False, str(e)

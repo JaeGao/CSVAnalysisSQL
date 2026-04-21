@@ -46,6 +46,8 @@ pyinstaller ^
     --noconsole ^
     --onefile ^
     --add-data "style.qss;." ^
+    --add-data "grip_horizontal.png;." ^
+    --add-data "grip_vertical.png;." ^
     --name "CSV_Analyzer" ^
     main.py
 

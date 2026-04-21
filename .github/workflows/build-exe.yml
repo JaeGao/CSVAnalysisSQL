@@ -52,7 +52,7 @@ jobs:
 
       - name: Build executable
         run: |
-          pyinstaller --noconsole --onefile --add-data "style.qss${{ matrix.separator }}." --name "CSV_Analyzer" main.py
+          pyinstaller --noconsole --onefile --add-data "style.qss${{ matrix.separator }}." --add-data "grip_horizontal.png${{ matrix.separator }}." --add-data "grip_vertical.png${{ matrix.separator }}." --name "CSV_Analyzer" main.py
 
       - name: Make executable (Unix)
         if: runner.os != 'Windows'
