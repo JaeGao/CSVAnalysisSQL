@@ -145,7 +145,7 @@ class CSVDatabase:
             if query.endswith(';'):
                 query = query[:-1]
                 
-            copy_query = f"COPY ({query}) TO '{out_file}' (HEADER, DELIMITER '|')"
+            copy_query = f"COPY ({query}) TO '{out_file}' (HEADER, DELIMITER ',')"
             self.con.execute(copy_query)
             return True, None
         except Exception as e:
