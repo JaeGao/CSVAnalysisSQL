@@ -250,8 +250,8 @@ class MainWindow(QMainWindow):
         file_layout = QHBoxLayout()
         self.file_path_edit = QLineEdit()
         self.file_path_edit.setReadOnly(True)
-        self.file_path_edit.setPlaceholderText("No CSV selected...")
-        browse_btn = QPushButton("Browse...")
+        self.file_path_edit.setPlaceholderText("No CSV selected")
+        browse_btn = QPushButton("Browse")
         browse_btn.clicked.connect(self.browse_file)
         load_btn = QPushButton("Load")
         load_btn.clicked.connect(self.load_dataset)
@@ -354,8 +354,8 @@ class MainWindow(QMainWindow):
         self.table_view.setSortingEnabled(True)
         
         main_splitter.addWidget(self.table_view)
-        main_splitter.setStretchFactor(0, 1)
-        main_splitter.setStretchFactor(1, 1)
+        main_splitter.setStretchFactor(0, 40)
+        main_splitter.setStretchFactor(1, 60)
         
         top_splitter.addWidget(main_splitter)
         top_splitter.setStretchFactor(0, 1)
