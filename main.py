@@ -117,8 +117,11 @@ class MainWindow(QMainWindow):
         left_layout.addWidget(self.schema_tree)
         
         schema_btn_layout = QHBoxLayout()
-        self.remove_dataset_btn = QPushButton("Remove Selected Dataset")
+        self.copy_all_btn = QPushButton("Copy All Schemas")
+        self.copy_all_btn.clicked.connect(self.copy_all_schemas)
+        self.remove_dataset_btn = QPushButton("Remove Selected")
         self.remove_dataset_btn.clicked.connect(self.remove_selected_dataset)
+        schema_btn_layout.addWidget(self.copy_all_btn)
         schema_btn_layout.addWidget(self.remove_dataset_btn)
         left_layout.addLayout(schema_btn_layout)
         
@@ -294,11 +297,43 @@ class MainWindow(QMainWindow):
             
         table_name = item.text(0)
         menu = QMenu()
+        copy_action = menu.addAction("Copy Schema")
         remove_action = menu.addAction(f"Remove '{table_name}'")
+        
         action = menu.exec(self.schema_tree.mapToGlobal(position))
         
         if action == remove_action:
             self.remove_dataset(table_name)
+        elif action == copy_action:
+            self.copy_schema_to_clipboard(table_name)
+            
+    def copy_all_schemas(self):
+        tables = self.db.get_tables()
+        if not tables:
+            QMessageBox.information(self, "Copy Schema", "No datasets loaded to copy.")
+            return
+            
+        self._copy_schemas_to_clipboard(tables)
+        self.status_label.setText(f"Copied {len(tables)} schemas to clipboard.")
+
+    def copy_schema_to_clipboard(self, table_name):
+        self._copy_schemas_to_clipboard([table_name])
+        self.status_label.setText(f"Copied schema for '{table_name}' to clipboard.")
+
+    def _copy_schemas_to_clipboard(self, tables_to_copy):
+        schema_text = []
+        for table_name in tables_to_copy:
+            schema = self.db.get_schema(table_name)
+            lines = [f"CREATE TABLE {table_name} ("]
+            col_lines = []
+            for col in schema:
+                col_lines.append(f"    \"{col['name']}\" {col['type']}")
+            lines.append(",\n".join(col_lines))
+            lines.append(");")
+            schema_text.append("\n".join(lines))
+            
+        final_text = "\n\n".join(schema_text)
+        QApplication.clipboard().setText(final_text)
             
     def remove_dataset(self, table_name):
         reply = QMessageBox.question(self, "Confirm Remove", f"Are you sure you want to remove the dataset '{table_name}'?", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
