@@ -7,259 +7,14 @@ from PyQt6.QtWidgets import (
     QComboBox, QPushButton, QLabel, QTableView, QHeaderView,
     QMessageBox, QSplitter, QListWidget, QPlainTextEdit, QTreeWidget, QTreeWidgetItem, QFileDialog, QInputDialog, QLineEdit, QCompleter, QProgressBar, QMenu
 )
-from PyQt6.QtCore import Qt, QAbstractTableModel, QVariant, QModelIndex, QRunnable, QThreadPool, pyqtSignal, pyqtSlot, QObject, QTimer, QStringListModel
-from PyQt6.QtGui import QFont, QIcon, QTextCursor
+from PyQt6.QtCore import Qt, QThreadPool, pyqtSlot, QTimer
+from PyQt6.QtGui import QFont, QIcon
 
 from database import CSVDatabase
-
-def resource_path(relative_path):
-    """ Get absolute path to resource, works for dev and for PyInstaller """
-    try:
-        # PyInstaller creates a temp folder and stores path in _MEIPASS
-        base_path = sys._MEIPASS
-    except Exception:
-        base_path = os.path.abspath(os.path.dirname(__file__))
-
-    return os.path.join(base_path, relative_path)
-
-class FetchSignals(QObject):
-    chunk_loaded = pyqtSignal(int, list, list) # chunk_idx, col_names, new_data
-
-class FetchWorker(QRunnable):
-    def __init__(self, db, query, chunk_size, chunk_idx, sort_col, sort_dir):
-        super().__init__()
-        self.db = db
-        self.query = query
-        self.chunk_size = chunk_size
-        self.chunk_idx = chunk_idx
-        self.sort_col = sort_col
-        self.sort_dir = sort_dir
-        self.signals = FetchSignals()
-
-    @pyqtSlot()
-    def run(self):
-        offset = self.chunk_idx * self.chunk_size
-        try:
-            col_names, new_data = self.db.execute_custom_query(
-                self.query, limit=self.chunk_size, offset=offset, sort_col=self.sort_col, sort_dir=self.sort_dir
-            )
-            self.signals.chunk_loaded.emit(self.chunk_idx, col_names, new_data)
-        except Exception as e:
-            print(f"Async fetch error: {e}")
-
-class LoadSignals(QObject):
-    finished = pyqtSignal(bool, str, str)
-
-class LoadWorker(QRunnable):
-    def __init__(self, db, file_path):
-        super().__init__()
-        self.db = db
-        self.file_path = file_path
-        self.signals = LoadSignals()
-
-    @pyqtSlot()
-    def run(self):
-        try:
-            success, err_or_table = self.db.load_csv(self.file_path)
-            self.signals.finished.emit(success, err_or_table, self.file_path)
-        except Exception as e:
-            self.signals.finished.emit(False, str(e), self.file_path)
-
-class CSVTableModel(QAbstractTableModel):
-    def __init__(self, db, query, total_rows):
-        super().__init__()
-        self.db = db
-        self.query = query
-        self.total_rows = total_rows
-        
-        self.chunk_size = 500
-        self.sort_col = None
-        self.sort_dir = "ASC"
-        
-        self.loaded_chunks = {}
-        self.fetching_chunks = set()
-        self.chunk_cache = {}
-        
-        self.fetch_timer = QTimer()
-        self.fetch_timer.setSingleShot(True)
-        self.fetch_timer.timeout.connect(self._process_pending_chunks)
-        self.pending_chunks = []
-        
-        # Fetch columns synchronously, it's virtually instant (limit 0)
-        try:
-            self.col_names, _ = self.db.execute_custom_query(self.query, limit=0)
-        except:
-            self.col_names = []
-            
-        self.threadpool = QThreadPool()
-        self._load_chunk_async(0)
-
-    def rowCount(self, parent=QModelIndex()):
-        return self.total_rows
-
-    def columnCount(self, parent=QModelIndex()):
-        return len(self.col_names)
-
-    def headerData(self, section, orientation, role):
-        if role == Qt.ItemDataRole.DisplayRole:
-            if orientation == Qt.Orientation.Horizontal:
-                if section < len(self.col_names):
-                    return self.col_names[section]
-                return ""
-            if orientation == Qt.Orientation.Vertical:
-                return str(section + 1)
-        return QVariant()
-
-    def data(self, index, role):
-        if not index.isValid() or role != Qt.ItemDataRole.DisplayRole:
-            return QVariant()
-
-        row = index.row()
-        col = index.column()
-
-        # Check if the row is loaded
-        chunk_idx = row // self.chunk_size
-        
-        if chunk_idx not in self.loaded_chunks:
-            self._schedule_chunk_fetch(chunk_idx)
-            return "Loading..."
-
-        # The internal list index
-        row_in_chunk = row % self.chunk_size
-
-        if chunk_idx in self.chunk_cache:
-            chunk_data = self.chunk_cache[chunk_idx]
-            if row_in_chunk < len(chunk_data):
-                val = chunk_data[row_in_chunk][col]
-                if val is None:
-                    return ""
-                return str(val)
-            
-        return QVariant()
-        
-    def _load_chunk_async(self, chunk_idx):
-        if chunk_idx in self.fetching_chunks:
-            return
-            
-        self.fetching_chunks.add(chunk_idx)
-        worker = FetchWorker(self.db, self.query, self.chunk_size, chunk_idx, self.sort_col, self.sort_dir)
-        worker.signals.chunk_loaded.connect(self._on_chunk_loaded)
-        self.threadpool.start(worker)
-
-    def _schedule_chunk_fetch(self, chunk_idx):
-        if chunk_idx in self.fetching_chunks or chunk_idx in self.loaded_chunks:
-            return
-            
-        if chunk_idx in self.pending_chunks:
-            self.pending_chunks.remove(chunk_idx)
-            
-        self.pending_chunks.append(chunk_idx)
-        
-        # Keep only the last 3 requested chunks
-        if len(self.pending_chunks) > 3:
-            self.pending_chunks.pop(0)
-            
-        self.fetch_timer.start(150)
-
-    def _process_pending_chunks(self):
-        for chunk_idx in self.pending_chunks:
-            self._load_chunk_async(chunk_idx)
-        self.pending_chunks.clear()
-
-    @pyqtSlot(int, list, list)
-    def _on_chunk_loaded(self, chunk_idx, col_names, new_data):
-        # Ignore stale responses (e.g. from before a sort action)
-        if chunk_idx not in self.fetching_chunks:
-            return 
-            
-        self.fetching_chunks.remove(chunk_idx)
-            
-        if not new_data:
-            return
-            
-        offset = chunk_idx * self.chunk_size
-        self.chunk_cache[chunk_idx] = new_data
-        self.loaded_chunks[chunk_idx] = True
-        
-        # Emit dataChanged to force UI update
-        start_idx = self.index(offset, 0)
-        end_idx = self.index(offset + len(new_data) - 1, self.columnCount() - 1)
-        self.dataChanged.emit(start_idx, end_idx, [Qt.ItemDataRole.DisplayRole])
-
-    def sort(self, column, order):
-        # We handle sorting dynamically by telling DuckDB to wrap our query with an ORDER BY
-        self.layoutAboutToBeChanged.emit()
-        self.sort_col = self.col_names[column]
-        self.sort_dir = "ASC" if order == Qt.SortOrder.AscendingOrder else "DESC"
-        
-        # Reset cache
-        self.loaded_chunks.clear()
-        self.fetching_chunks.clear() # This invalidates any running background workers
-        self.chunk_cache.clear()
-        self.pending_chunks.clear()
-        self.fetch_timer.stop()
-        
-        self.layoutChanged.emit()
-        
-        # Re-fetch initial chunk with new sort
-        self._load_chunk_async(0)
-
-class SQLEditor(QPlainTextEdit):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.completer = QCompleter(self)
-        self.completer.setWidget(self)
-        self.completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
-        self.completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
-        self.completer.activated.connect(self.insertCompletion)
-        self.model = QStringListModel()
-        self.completer.setModel(self.model)
-
-    def set_completions(self, words):
-        self.model.setStringList(words)
-
-    def insertCompletion(self, completion):
-        tc = self.textCursor()
-        extra = len(completion) - len(self.completer.completionPrefix())
-        tc.movePosition(QTextCursor.MoveOperation.Left)
-        tc.movePosition(QTextCursor.MoveOperation.EndOfWord)
-        tc.insertText(completion[-extra:])
-        self.setTextCursor(tc)
-
-    def textUnderCursor(self):
-        tc = self.textCursor()
-        tc.select(QTextCursor.SelectionType.WordUnderCursor)
-        return tc.selectedText()
-
-    def keyPressEvent(self, e):
-        if self.completer and self.completer.popup().isVisible():
-            if e.key() in (Qt.Key.Key_Enter, Qt.Key.Key_Return, Qt.Key.Key_Escape, Qt.Key.Key_Tab, Qt.Key.Key_Backtab):
-                e.ignore()
-                return
-
-        isShortcut = (e.modifiers() & Qt.KeyboardModifier.ControlModifier) and e.key() == Qt.Key.Key_Space
-        if not self.completer or not isShortcut:
-            super().keyPressEvent(e)
-
-        ctrlOrShift = e.modifiers() & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier)
-        if not self.completer or (ctrlOrShift and not e.text()):
-            return
-
-        hasModifier = (e.modifiers() != Qt.KeyboardModifier.NoModifier) and not ctrlOrShift
-        completionPrefix = self.textUnderCursor()
-
-        if not isShortcut and (hasModifier or not e.text() or len(completionPrefix) < 1):
-            self.completer.popup().hide()
-            return
-
-        if completionPrefix != self.completer.completionPrefix():
-            self.completer.setCompletionPrefix(completionPrefix)
-            self.completer.popup().setCurrentIndex(self.completer.completionModel().index(0, 0))
-
-        cr = self.cursorRect()
-        cr.setWidth(self.completer.popup().sizeHintForColumn(0) + self.completer.popup().verticalScrollBar().sizeHint().width())
-        self.completer.complete(cr)
-
+from utils import resource_path
+from workers import LoadWorker
+from models import CSVTableModel
+from editor import SQLEditor
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -317,7 +72,17 @@ class MainWindow(QMainWindow):
         top_splitter = QSplitter(Qt.Orientation.Horizontal)
         main_splitter = QSplitter(Qt.Orientation.Vertical)
         
-        # --- LEFT PANE (Schema & Files) ---
+        self._setup_left_pane(top_splitter)
+        self._setup_right_pane(main_splitter)
+        self._setup_bottom_pane(main_splitter)
+        
+        top_splitter.addWidget(main_splitter)
+        top_splitter.setStretchFactor(0, 1)
+        top_splitter.setStretchFactor(1, 2)
+        
+        main_layout.addWidget(top_splitter)
+
+    def _setup_left_pane(self, parent_splitter):
         left_pane = QWidget()
         left_layout = QVBoxLayout(left_pane)
         left_layout.setContentsMargins(0, 0, 0, 0)
@@ -373,9 +138,9 @@ class MainWindow(QMainWindow):
         script_btn_layout.addWidget(del_script_btn)
         left_layout.addLayout(script_btn_layout)
         
-        top_splitter.addWidget(left_pane)
-        
-        # --- RIGHT PANE (Editor & Results) ---
+        parent_splitter.addWidget(left_pane)
+
+    def _setup_right_pane(self, parent_splitter):
         right_pane = QWidget()
         right_layout = QVBoxLayout(right_pane)
         right_layout.setContentsMargins(0, 0, 0, 0)
@@ -432,26 +197,18 @@ class MainWindow(QMainWindow):
         action_layout.addWidget(self.execute_btn)
         right_layout.addLayout(action_layout)
         
-        # Add Editor to vertical splitter
-        main_splitter.addWidget(right_pane)
-        
-        # --- BOTTOM PANE (Table) ---
+        parent_splitter.addWidget(right_pane)
+
+    def _setup_bottom_pane(self, parent_splitter):
         self.table_view = QTableView()
         self.table_view.setAlternatingRowColors(True)
         self.table_view.horizontalHeader().setStretchLastSection(True)
         self.table_view.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-        # Enable sorting on the table view!
         self.table_view.setSortingEnabled(True)
         
-        main_splitter.addWidget(self.table_view)
-        main_splitter.setStretchFactor(0, 40)
-        main_splitter.setStretchFactor(1, 60)
-        
-        top_splitter.addWidget(main_splitter)
-        top_splitter.setStretchFactor(0, 1)
-        top_splitter.setStretchFactor(1, 2)
-        
-        main_layout.addWidget(top_splitter)
+        parent_splitter.addWidget(self.table_view)
+        parent_splitter.setStretchFactor(0, 40)
+        parent_splitter.setStretchFactor(1, 60)
 
     def browse_file(self):
         file_path, _ = QFileDialog.getOpenFileName(self, "Select CSV File", "", "CSV Files (*.csv);;All Files (*)")
