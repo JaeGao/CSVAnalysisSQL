@@ -6,17 +6,27 @@ QMainWindow {
 
 /* Splitter Handles */
 QSplitter::handle {
-    background-color: #F8F9FA;
+    background-color: transparent;
+}
+
+QSplitter::handle:hover {
+    background-color: #E9ECEF;
+}
+
+QSplitter::handle:pressed {
+    background-color: #DEE2E6;
 }
 
 QSplitter::handle:horizontal {
     width: 6px;
     image: url(grip_horizontal.png);
+    border-left: 1px solid #DEE2E6;
 }
 
 QSplitter::handle:vertical {
     height: 6px;
     image: url(grip_vertical.png);
+    border-top: 1px solid #DEE2E6;
 }
 
 QWidget {

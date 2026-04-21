@@ -50,12 +50,12 @@ jobs:
       - name: Build executable (Windows)
         if: runner.os == 'Windows'
         run: |
-          pyinstaller --noconsole --onefile --add-data "src\style.qss;." --add-data "src\grip_horizontal.png;." --add-data "src\grip_vertical.png;." --add-data "src\icon.png;." --icon "src\icon.ico" --name "CSV_Analyzer" src\main.py
+          pyinstaller --noconsole --onefile --add-data "src\style.qss;." --add-data "src\grip_horizontal.png;." --add-data "src\grip_vertical.png;." --add-data "src\icon.png;." --add-data "src\scripts.json;." --icon "src\icon.ico" --name "CSV_Analyzer" src\main.py
 
       - name: Build executable (Unix)
         if: runner.os != 'Windows'
         run: |
-          pyinstaller --noconsole --onefile --add-data "src/style.qss:." --add-data "src/grip_horizontal.png:." --add-data "src/grip_vertical.png:." --add-data "src/icon.png:." --name "CSV_Analyzer" src/main.py
+          pyinstaller --noconsole --onefile --add-data "src/style.qss:." --add-data "src/grip_horizontal.png:." --add-data "src/grip_vertical.png:." --add-data "src/icon.png:." --add-data "src/scripts.json:." --name "CSV_Analyzer" src/main.py
 
       - name: Make executable (Unix)
         if: runner.os != 'Windows'

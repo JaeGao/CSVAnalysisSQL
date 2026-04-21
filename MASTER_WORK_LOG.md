@@ -6,12 +6,13 @@ This document serves as the master record for the `CSV Analyzer SQL` application
 
 ## 1. Implementation Summary
 `CSV Analyzer SQL` is a robust PyQt6 application designed to ingest and analyze massive CSV datasets using SQL. 
-To ensure maintainability, the application was recently refactored from a monolithic script into a clean, modular architecture:
-- **`database.py`**: Handles all DuckDB interactions, schema fetching, and query execution.
-- **`workers.py`**: Contains background thread logic (`QRunnable`) to prevent UI blocking.
-- **`models.py`**: Contains the virtualized data model (`CSVTableModel`) for the Qt Table View.
-- **`editor.py`**: Encapsulates the custom `SQLEditor` component with advanced autocomplete functionality.
-- **`main.py`**: The application entry point and `MainWindow` UI composition layer.
+To ensure maintainability and a clean project root, the application uses a modular architecture with all core code located in the `src/` directory:
+- **`src/database.py`**: Handles all DuckDB interactions, schema fetching, robust CSV ingestion, and query execution.
+- **`src/workers.py`**: Contains background thread logic (`QRunnable`) to prevent UI blocking.
+- **`src/models.py`**: Contains the virtualized data model (`CSVTableModel`) for the Qt Table View.
+- **`src/editor.py`**: Encapsulates the custom `SQLEditor` component with advanced autocomplete functionality.
+- **`src/utils.py`**: Contains utility functions like `resource_path()` for cross-platform PyInstaller asset resolution.
+- **`src/main.py`**: The application entry point and `MainWindow` UI composition layer.
 
 ---
 
@@ -48,6 +49,14 @@ During development, several critical bottlenecks and crashes were encountered. H
   - **Table Names:** Sanitized table names upon load (replacing non-alphanumeric characters with `_`).
   - **Column Names:** The SQL Autocomplete system now automatically detects non-alphanumeric column names and wraps them in double quotes (`"Total Price"`) to ensure syntax safety.
 
+### Pitfall 7: Messy CSV Ingestion Failures
+- **The Problem:** DuckDB's strict schema inference would fail on CSVs with inconsistent data types or malformed rows, causing load failures.
+- **The Solution:** Implemented robust fallback logic. First, attempt to load with `ignore_errors=true`. If strict inference fails, fallback to loading all columns as `VARCHAR` (`all_varchar=true`) to guarantee ingestion regardless of cleanliness.
+
+### Pitfall 8: Cross-Platform Resource Pathing in PyInstaller
+- **The Problem:** When packaged as a single executable, relative paths to images, icons, and QSS stylesheets break. Additionally, Windows paths with backslashes (`\`) break QSS `url()` statements.
+- **The Solution:** Implemented a `resource_path()` utility that maps to `sys._MEIPASS` when frozen. Ensured paths used in QSS string replacements are explicitly converted to forward slashes (`/`), and bundled assets like `scripts.json` safely fallback/copy to the user's execution directory.
+
 ---
 
 ## 3. Performance Optimizations
@@ -59,7 +68,16 @@ Beyond crash prevention, the following systemic optimizations exist:
 
 ---
 
-## 4. Development Guidelines
+## 4. Distribution and CI/CD
+
+To ensure seamless distribution across operating systems, the project utilizes:
+- **PyInstaller:** Configured via `build.bat` and `build.sh` to package the application as a standalone, single-file executable `--onefile` with no console `--noconsole`.
+- **Resource Bundling:** All styling assets (`style.qss`), scripts (`scripts.json`), icons (`icon.ico`, `icon.png`), and UI control assets (`grip_horizontal.png`) are natively injected via `--add-data`.
+- **GitHub Actions:** A fully automated `build-exe.yml` workflow triggers on tags, compiling Windows, macOS, and Linux executables concurrently and attaching them to GitHub Releases.
+
+---
+
+## 5. Development Guidelines
 
 To prevent regressions, adhere to the following rules when modifying this codebase:
 

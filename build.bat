@@ -50,6 +50,7 @@ pyinstaller ^
     --add-data "src\grip_horizontal.png;." ^
     --add-data "src\grip_vertical.png;." ^
     --add-data "src\icon.png;." ^
+    --add-data "src\scripts.json;." ^
     --icon "src\icon.ico" ^
     --name "CSV_Analyzer" ^
     src\main.py

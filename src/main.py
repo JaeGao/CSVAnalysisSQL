@@ -40,8 +40,8 @@ class MainWindow(QMainWindow):
             with open(resource_path("style.qss"), "r") as f:
                 qss = f.read()
             # Resolve relative image paths for PyInstaller compatibility
-            qss = qss.replace("url(grip_horizontal.png)", f"url({resource_path('grip_horizontal.png')})")
-            qss = qss.replace("url(grip_vertical.png)", f"url({resource_path('grip_vertical.png')})")
+            qss = qss.replace("url(grip_horizontal.png)", f"url({resource_path('grip_horizontal.png').replace(os.sep, '/')})")
+            qss = qss.replace("url(grip_vertical.png)", f"url({resource_path('grip_vertical.png').replace(os.sep, '/')})")
             self.setStyleSheet(qss)
         except Exception as e:
             print(f"Could not load stylesheet: {e}")
@@ -50,6 +50,15 @@ class MainWindow(QMainWindow):
         self.update_autocomplete()
 
     def load_scripts(self):
+        import shutil
+        if not os.path.exists(self.scripts_file):
+            bundled_scripts = resource_path("scripts.json")
+            if os.path.exists(bundled_scripts) and os.path.abspath(bundled_scripts) != os.path.abspath(self.scripts_file):
+                try:
+                    shutil.copy2(bundled_scripts, self.scripts_file)
+                except Exception as e:
+                    print(f"Could not copy bundled scripts: {e}")
+
         if os.path.exists(self.scripts_file):
             try:
                 with open(self.scripts_file, 'r') as f:
@@ -57,32 +66,7 @@ class MainWindow(QMainWindow):
             except:
                 self.saved_scripts = {}
         else:
-            self.saved_scripts = {
-                "Grand Total Store Sales": (
-                    "SELECT \n"
-                    "  COALESCE(Store, 'GRAND TOTAL') as Store,\n"
-                    "  COUNT(*) as Rows,\n"
-                    "  CAST(SUM(CAST(\"Qty Sold\" AS DECIMAL(18,2))) AS DECIMAL(18,2)) as Qty,\n"
-                    "  CAST(SUM(CAST(\"Qty Sold\" AS DECIMAL(18,2)) * CAST(Price AS DECIMAL(18,2))) AS DECIMAL(18,2)) as \"Total Price\",\n"
-                    "  CAST(SUM(CASE WHEN CAST(\"Qty Sold\" AS DECIMAL(18,2)) * CAST(Price AS DECIMAL(18,2)) < 0 THEN CAST(\"Qty Sold\" AS DECIMAL(18,2)) * CAST(Price AS DECIMAL(18,2)) ELSE 0 END) AS DECIMAL(18,2)) as \"Neg Total\"\n"
-                    "FROM dataset\n"
-                    "GROUP BY ROLLUP(Store)\n"
-                    "ORDER BY Store IS NULL, Store"
-                ),
-                "Store Sales (Date Range)": (
-                    "SELECT \n"
-                    "  COALESCE(Store, 'GRAND TOTAL') as Store,\n"
-                    "  COUNT(*) as Rows,\n"
-                    "  CAST(SUM(CAST(\"Qty Sold\" AS DECIMAL(18,2))) AS DECIMAL(18,2)) as Qty,\n"
-                    "  CAST(SUM(CAST(\"Qty Sold\" AS DECIMAL(18,2)) * CAST(Price AS DECIMAL(18,2))) AS DECIMAL(18,2)) as \"Total Price\",\n"
-                    "  CAST(SUM(CASE WHEN CAST(\"Qty Sold\" AS DECIMAL(18,2)) * CAST(Price AS DECIMAL(18,2)) < 0 THEN CAST(\"Qty Sold\" AS DECIMAL(18,2)) * CAST(Price AS DECIMAL(18,2)) ELSE 0 END) AS DECIMAL(18,2)) as \"Neg Total\"\n"
-                    "FROM dataset\n"
-                    "WHERE CAST(\"Invoice Date\" AS DATE) >= '2024-01-01'\n"
-                    "  AND CAST(\"Invoice Date\" AS DATE) <= '2026-04-01'\n"
-                    "GROUP BY ROLLUP(Store)\n"
-                    "ORDER BY Store IS NULL, Store"
-                ),
-            }
+            self.saved_scripts = {}
             self.save_scripts()
 
     def save_scripts(self):
