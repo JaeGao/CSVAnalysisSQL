@@ -1,6 +1,7 @@
 import duckdb
 import os
 import tempfile
+import re
 
 class CSVDatabase:
     def __init__(self):
@@ -17,24 +18,47 @@ class CSVDatabase:
         except Exception as e:
             print(f"Error cleaning up database: {e}")
 
+    @staticmethod
+    def sanitize_table_name(filename):
+        """
+        Converts a filename into a valid SQL identifier.
+        """
+        basename = os.path.splitext(os.path.basename(filename))[0]
+        sanitized = re.sub(r'[^a-zA-Z0-9_]', '_', basename)
+        if not sanitized or not sanitized[0].isalpha():
+            sanitized = 't_' + sanitized
+        return sanitized
+
     def load_csv(self, file_path):
         """
-        Creates a table named 'dataset' that imports all data from the CSV into memory.
-        This allows the user to simply query: SELECT * FROM dataset
+        Creates a table from the CSV into memory.
+        This allows the user to simply query: SELECT * FROM table_name
         """
         try:
-            self.con.execute("DROP TABLE IF EXISTS dataset")
-            self.con.execute(f"CREATE TABLE dataset AS SELECT * FROM read_csv_auto('{file_path}')")
-            return True, None
+            table_name = self.sanitize_table_name(file_path)
+            self.con.execute(f"DROP TABLE IF EXISTS {table_name}")
+            self.con.execute(f"CREATE TABLE {table_name} AS SELECT * FROM read_csv_auto('{file_path}')")
+            return True, table_name
         except Exception as e:
             return False, str(e)
 
-    def get_schema(self):
+    def get_tables(self):
         """
-        Returns a list of dictionaries with column names and types for the 'dataset' view.
+        Returns a list of all loaded tables.
         """
         try:
-            result = self.con.execute("DESCRIBE dataset").fetchall()
+            result = self.con.execute("SHOW TABLES").fetchall()
+            return [row[0] for row in result]
+        except Exception as e:
+            print(f"Error getting tables: {e}")
+            return []
+
+    def get_schema(self, table_name):
+        """
+        Returns a list of dictionaries with column names and types for the given table.
+        """
+        try:
+            result = self.con.execute(f"DESCRIBE {table_name}").fetchall()
             columns = [{"name": row[0], "type": row[1]} for row in result]
             return columns
         except Exception as e:

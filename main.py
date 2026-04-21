@@ -5,10 +5,10 @@ import json
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QComboBox, QPushButton, QLabel, QTableView, QHeaderView,
-    QMessageBox, QSplitter, QListWidget, QPlainTextEdit, QTreeWidget, QTreeWidgetItem, QFileDialog, QInputDialog, QLineEdit
+    QMessageBox, QSplitter, QListWidget, QPlainTextEdit, QTreeWidget, QTreeWidgetItem, QFileDialog, QInputDialog, QLineEdit, QCompleter
 )
-from PyQt6.QtCore import Qt, QAbstractTableModel, QVariant, QModelIndex, QRunnable, QThreadPool, pyqtSignal, pyqtSlot, QObject, QTimer
-from PyQt6.QtGui import QFont, QIcon
+from PyQt6.QtCore import Qt, QAbstractTableModel, QVariant, QModelIndex, QRunnable, QThreadPool, pyqtSignal, pyqtSlot, QObject, QTimer, QStringListModel
+from PyQt6.QtGui import QFont, QIcon, QTextCursor
 
 from database import CSVDatabase
 
@@ -186,6 +186,62 @@ class CSVTableModel(QAbstractTableModel):
         # Re-fetch initial chunk with new sort
         self._load_chunk_async(0)
 
+class SQLEditor(QPlainTextEdit):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.completer = QCompleter(self)
+        self.completer.setWidget(self)
+        self.completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
+        self.completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        self.completer.activated.connect(self.insertCompletion)
+        self.model = QStringListModel()
+        self.completer.setModel(self.model)
+
+    def set_completions(self, words):
+        self.model.setStringList(words)
+
+    def insertCompletion(self, completion):
+        tc = self.textCursor()
+        extra = len(completion) - len(self.completer.completionPrefix())
+        tc.movePosition(QTextCursor.MoveOperation.Left)
+        tc.movePosition(QTextCursor.MoveOperation.EndOfWord)
+        tc.insertText(completion[-extra:])
+        self.setTextCursor(tc)
+
+    def textUnderCursor(self):
+        tc = self.textCursor()
+        tc.select(QTextCursor.SelectionType.WordUnderCursor)
+        return tc.selectedText()
+
+    def keyPressEvent(self, e):
+        if self.completer and self.completer.popup().isVisible():
+            if e.key() in (Qt.Key.Key_Enter, Qt.Key.Key_Return, Qt.Key.Key_Escape, Qt.Key.Key_Tab, Qt.Key.Key_Backtab):
+                e.ignore()
+                return
+
+        isShortcut = (e.modifiers() & Qt.KeyboardModifier.ControlModifier) and e.key() == Qt.Key.Key_Space
+        if not self.completer or not isShortcut:
+            super().keyPressEvent(e)
+
+        ctrlOrShift = e.modifiers() & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier)
+        if not self.completer or (ctrlOrShift and not e.text()):
+            return
+
+        hasModifier = (e.modifiers() != Qt.KeyboardModifier.NoModifier) and not ctrlOrShift
+        completionPrefix = self.textUnderCursor()
+
+        if not isShortcut and (hasModifier or not e.text() or len(completionPrefix) < 1):
+            self.completer.popup().hide()
+            return
+
+        if completionPrefix != self.completer.completionPrefix():
+            self.completer.setCompletionPrefix(completionPrefix)
+            self.completer.popup().setCurrentIndex(self.completer.completionModel().index(0, 0))
+
+        cr = self.cursorRect()
+        cr.setWidth(self.completer.popup().sizeHintForColumn(0) + self.completer.popup().verticalScrollBar().sizeHint().width())
+        self.completer.complete(cr)
+
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -211,6 +267,7 @@ class MainWindow(QMainWindow):
             print(f"Could not load stylesheet: {e}")
             
         self.setup_ui()
+        self.update_autocomplete()
 
     def load_scripts(self):
         if os.path.exists(self.scripts_file):
@@ -262,7 +319,7 @@ class MainWindow(QMainWindow):
         left_layout.addLayout(file_layout)
         
         # Schema Viewer
-        left_layout.addWidget(QLabel("Schema (Table: 'dataset'):"))
+        left_layout.addWidget(QLabel("Database Schema:"))
         self.schema_tree = QTreeWidget()
         self.schema_tree.setHeaderLabels(["Column Name", "Type"])
         self.schema_tree.setAlternatingRowColors(True)
@@ -301,7 +358,7 @@ class MainWindow(QMainWindow):
         
         # Snippets
         snip_select = QPushButton("SELECT *")
-        snip_select.clicked.connect(lambda: self.sql_editor.insertPlainText("SELECT * FROM dataset\n"))
+        snip_select.clicked.connect(lambda: self.sql_editor.insertPlainText("SELECT * FROM \n"))
         snip_groupby = QPushButton("GROUP BY")
         snip_groupby.clicked.connect(lambda: self.sql_editor.insertPlainText("GROUP BY "))
         snip_sum = QPushButton("SUM()")
@@ -316,8 +373,8 @@ class MainWindow(QMainWindow):
         toolbar_layout.addStretch()
         right_layout.addLayout(toolbar_layout)
         
-        self.sql_editor = QPlainTextEdit()
-        self.sql_editor.setPlaceholderText("Write your SQL query here. You can query the 'dataset' view.")
+        self.sql_editor = SQLEditor()
+        self.sql_editor.setPlaceholderText("Write your SQL query here. Try Ctrl+Space for autocomplete.")
         font = QFont("Consolas", 12)
         self.sql_editor.setFont(font)
         right_layout.addWidget(self.sql_editor)
@@ -405,20 +462,52 @@ class MainWindow(QMainWindow):
         self.status_label.setText(f"Loading {file_path} into DuckDB view...")
         QApplication.processEvents()
         
-        success, err = self.db.load_csv(file_path)
+        success, err_or_table = self.db.load_csv(file_path)
         if not success:
-            QMessageBox.critical(self, "Load Error", err)
+            QMessageBox.critical(self, "Load Error", err_or_table)
             self.status_label.setText("Load failed.")
             return
             
-        # Update schema viewer
-        schema = self.db.get_schema()
-        self.schema_tree.clear()
-        for col in schema:
-            item = QTreeWidgetItem([col['name'], col['type']])
-            self.schema_tree.addTopLevelItem(item)
+        table_name = err_or_table
+        self.refresh_schema_tree()
+        self.update_autocomplete()
             
-        self.status_label.setText(f"Loaded {file_path}. You can now query 'dataset'.")
+        self.status_label.setText(f"Loaded {file_path}. You can now query '{table_name}'.")
+
+    def refresh_schema_tree(self):
+        self.schema_tree.clear()
+        tables = self.db.get_tables()
+        for table in tables:
+            table_item = QTreeWidgetItem([table, "TABLE"])
+            font = QFont()
+            font.setBold(True)
+            table_item.setFont(0, font)
+            self.schema_tree.addTopLevelItem(table_item)
+            
+            schema = self.db.get_schema(table)
+            for col in schema:
+                col_item = QTreeWidgetItem([col['name'], col['type']])
+                table_item.addChild(col_item)
+            
+            table_item.setExpanded(True)
+
+    def update_autocomplete(self):
+        import re
+        words = ["SELECT", "FROM", "WHERE", "GROUP BY", "ORDER BY", "HAVING", "LIMIT", "OFFSET", "JOIN", "LEFT JOIN", "ON", "AS", "COUNT", "SUM", "AVG", "MIN", "MAX", "CASE", "WHEN", "THEN", "ELSE", "END"]
+        tables = self.db.get_tables()
+        words.extend(tables)
+        for table in tables:
+            schema = self.db.get_schema(table)
+            for col in schema:
+                col_name = col['name']
+                if not re.match(r'^[a-zA-Z0-9_]+$', col_name):
+                    words.append(f'"{col_name}"')
+                else:
+                    words.append(col_name)
+        
+        words = list(set(words))
+        words.sort()
+        self.sql_editor.set_completions(words)
 
     def execute_query(self):
         query = self.sql_editor.toPlainText().strip()
