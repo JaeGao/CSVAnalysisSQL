@@ -6,10 +6,10 @@ import sqlparse
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QComboBox, QPushButton, QLabel, QTableView, QHeaderView,
-    QMessageBox, QSplitter, QListWidget, QPlainTextEdit, QTreeWidget, QTreeWidgetItem, QFileDialog, QInputDialog, QLineEdit, QCompleter, QProgressBar, QMenu
+    QMessageBox, QSplitter, QListWidget, QPlainTextEdit, QTreeWidget, QTreeWidgetItem, QFileDialog, QInputDialog, QLineEdit, QCompleter, QProgressBar, QMenu, QAbstractItemView
 )
 from PyQt6.QtCore import Qt, QThreadPool, pyqtSlot, QTimer
-from PyQt6.QtGui import QFont, QIcon
+from PyQt6.QtGui import QFont, QIcon, QShortcut, QKeySequence
 
 from database import CSVDatabase
 from utils import resource_path
@@ -115,6 +115,7 @@ class MainWindow(QMainWindow):
         
         schema_layout.addWidget(QLabel("Database Schema:"))
         self.schema_tree = QTreeWidget()
+        self.schema_tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.schema_tree.setHeaderLabels(["Column Name", "Type"])
         self.schema_tree.setAlternatingRowColors(True)
         self.schema_tree.header().setStretchLastSection(True)
@@ -228,6 +229,11 @@ class MainWindow(QMainWindow):
         self.execute_btn.setObjectName("executeBtn")
         self.execute_btn.setMinimumWidth(150)
         self.execute_btn.clicked.connect(self.execute_query)
+        
+        self.execute_shortcut = QShortcut(QKeySequence("Ctrl+Return"), self)
+        self.execute_shortcut.activated.connect(self.execute_query)
+        self.execute_shortcut_enter = QShortcut(QKeySequence("Ctrl+Enter"), self)
+        self.execute_shortcut_enter.activated.connect(self.execute_query)
         self.execute_btn.setShortcut("F5")
         
         action_layout.addWidget(self.status_label)
@@ -476,6 +482,14 @@ class MainWindow(QMainWindow):
             self.table_view.setModel(self.model)
             # Remove resizeColumnsToContents to prevent UI freeze on large datasets
             # self.table_view.resizeColumnsToContents()
+            
+            # Ensure columns are wide enough for their headers
+            font_metrics = self.table_view.fontMetrics()
+            for i in range(self.model.columnCount()):
+                header_text = str(self.model.headerData(i, Qt.Orientation.Horizontal, Qt.ItemDataRole.DisplayRole))
+                min_width = font_metrics.horizontalAdvance(header_text) + 35 # add padding
+                if self.table_view.columnWidth(i) < min_width:
+                    self.table_view.setColumnWidth(i, min_width)
             
             self.status_label.setText(f"Query returned {total_rows} rows.")
             

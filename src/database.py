@@ -29,6 +29,17 @@ class CSVDatabase:
             sanitized = 't_' + sanitized
         return sanitized
 
+    def _drop_object(self, name):
+        """Safely drop a table or view by trying both."""
+        try:
+            self.con.execute(f"DROP VIEW IF EXISTS {name}")
+        except Exception:
+            pass
+        try:
+            self.con.execute(f"DROP TABLE IF EXISTS {name}")
+        except Exception:
+            pass
+
     def load_csv(self, file_path):
         """
         Creates a table from the CSV file.
@@ -40,7 +51,7 @@ class CSVDatabase:
         escaped_path = file_path.replace("'", "''")
         
         try:
-            self.con.execute(f"DROP TABLE IF EXISTS {table_name}")
+            self._drop_object(table_name)
             self.con.execute(
                 f"CREATE TABLE {table_name} AS SELECT * FROM "
                 f"read_csv_auto('{escaped_path}', ignore_errors=true)"
@@ -50,7 +61,7 @@ class CSVDatabase:
             pass
         
         try:
-            self.con.execute(f"DROP TABLE IF EXISTS {table_name}")
+            self._drop_object(table_name)
             self.con.execute(
                 f"CREATE TABLE {table_name} AS SELECT * FROM "
                 f"read_csv_auto('{escaped_path}', all_varchar=true)"
@@ -64,7 +75,7 @@ class CSVDatabase:
         Drops the specified table from the database.
         """
         try:
-            self.con.execute(f"DROP TABLE IF EXISTS {table_name}")
+            self._drop_object(table_name)
             return True, None
         except Exception as e:
             return False, str(e)

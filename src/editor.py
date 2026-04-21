@@ -17,11 +17,27 @@ class SQLEditor(QPlainTextEdit):
         self.model.setStringList(words)
 
     def insertCompletion(self, completion):
+        if self.completer.widget() != self:
+            return
+            
         tc = self.textCursor()
-        extra = len(completion) - len(self.completer.completionPrefix())
-        tc.movePosition(QTextCursor.MoveOperation.Left)
-        tc.movePosition(QTextCursor.MoveOperation.EndOfWord)
-        tc.insertText(completion[-extra:])
+        prefix = self.completer.completionPrefix()
+        
+        # Select the prefix that the user has already typed
+        tc.movePosition(QTextCursor.MoveOperation.Left, QTextCursor.MoveMode.KeepAnchor, len(prefix))
+        
+        # Check if the character right before the prefix is a quote, 
+        # and if the completion also starts with a quote.
+        tc_check = self.textCursor()
+        tc_check.movePosition(QTextCursor.MoveOperation.Left, QTextCursor.MoveMode.MoveAnchor, len(prefix))
+        tc_check.movePosition(QTextCursor.MoveOperation.Left, QTextCursor.MoveMode.KeepAnchor, 1)
+        prev_char = tc_check.selectedText()
+        
+        if prev_char == '"' and completion.startswith('"'):
+            # The user already typed a quote, so select that quote too so it gets replaced
+            tc.movePosition(QTextCursor.MoveOperation.Left, QTextCursor.MoveMode.KeepAnchor, 1)
+            
+        tc.insertText(completion)
         self.setTextCursor(tc)
 
     def textUnderCursor(self):

@@ -150,9 +150,18 @@ QComboBox::drop-down {
     width: 20px;
 }
 
-QComboBox QAbstractItemView, QListWidget::item:selected, QTreeWidget::item:selected {
+QComboBox QAbstractItemView, QListWidget::item:selected, QTreeWidget::item:selected, QTableView::item:selected {
     background-color: #0D6EFD;
     color: #FFFFFF;
+}
+
+QListWidget::item:selected:!active, QTreeWidget::item:selected:!active, QTableView::item:selected:!active {
+    background-color: #6C757D;
+    color: #FFFFFF;
+}
+
+QListWidget, QTreeWidget, QTableView {
+    outline: none;
 }
 
 /* Table View */

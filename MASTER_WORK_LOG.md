@@ -57,6 +57,10 @@ During development, several critical bottlenecks and crashes were encountered. H
 - **The Problem:** When packaged as a single executable, relative paths to images, icons, and QSS stylesheets break. Additionally, Windows paths with backslashes (`\`) break QSS `url()` statements.
 - **The Solution:** Implemented a `resource_path()` utility that maps to `sys._MEIPASS` when frozen. Ensured paths used in QSS string replacements are explicitly converted to forward slashes (`/`), and bundled assets like `scripts.json` safely fallback/copy to the user's execution directory.
 
+### Pitfall 9: DuckDB Catalog Errors on Overwrites
+- **The Problem:** Executing `DROP TABLE IF EXISTS` throws a Catalog Error if the object is actually a View (and vice-versa). This crashed the app when saving views or reloading CSVs.
+- **The Solution:** Implemented a `_drop_object` wrapper that sequentially catches exceptions for both `DROP VIEW IF EXISTS` and `DROP TABLE IF EXISTS` to safely overwrite references.
+
 ---
 
 ## 3. UI/UX and Quality of Life Enhancements
@@ -66,9 +70,11 @@ The application prioritizes user experience and rapid iteration through several 
   - **Format**: Leverages `sqlparse` to prettify complex, nested queries instantly.
   - **Query History**: Automatically tracks successful queries during a session in a dropdown, allowing rapid iteration without losing work.
   - **Save as View**: Immediately creates a virtual table (`CREATE OR REPLACE VIEW`) from the current query and loads it into the schema tree for downstream analysis.
-- **Smart Autocomplete**: The `SQLEditor` continuously provides context-aware autocomplete suggestions (columns, tables, SQL keywords) dynamically as the user types, completely removing the need for manual hotkeys like `Ctrl+Space`.
-- **Dynamic Layouts**: The `Schema Tree` enforces a clean `60/40` width ratio between the "Column Name" and "Type" headers. This ratio is dynamically recalculated via `resizeEvent` whenever the side panel is adjusted.
+  - **Execute Shortcut**: Standardized `Ctrl+Enter` and `F5` shortcuts to execute queries without UI interaction.
+- **Smart Autocomplete**: The `SQLEditor` continuously provides context-aware autocomplete suggestions (columns, tables, SQL keywords) dynamically as the user types. It uses an exact-prefix replacement algorithm to maintain correct casing and preserve quoted identifiers seamlessly.
+- **Dynamic Layouts**: The `Schema Tree` enforces a clean `60/40` width ratio between the "Column Name" and "Type" headers. It also supports `ExtendedSelection` allowing users to select and copy multiple columns at once.
 - **Contextual Actions**: Right-clicking columns in the Schema Tree allows for one-click copying of exact column names directly to the clipboard.
+- **Consistent Styling**: Customized QSS prevents default dotted-outlines on Windows tables/trees and ensures inactive selection colors remain visible and professional.
 
 ---
 
@@ -77,7 +83,8 @@ The application prioritizes user experience and rapid iteration through several 
 Beyond crash prevention, the following systemic optimizations exist:
 - **OLAP Engine:** DuckDB's columnar layout evaluates analytical queries (like `GROUP BY` and `SUM`) exponentially faster than row-based databases like SQLite.
 - **Deep Paging (O(1) Seek):** Because DuckDB compiles the CSV into an internal binary format upon load, scrolling to the absolute bottom of a 50M row dataset (`OFFSET 49999500`) does **not** result in a sequential scan. It seeks instantly.
-- **Native Data Export:** The `Export Results` feature leverages DuckDB's `COPY (...) TO '...'` command, streaming results directly to disk at C++ speed without ever pulling the data into Python RAM.
+- **Native Data Export:** The `Export Results` feature leverages DuckDB's `COPY (...) TO '...'` command, streaming results directly to disk as standard comma-delimited CSVs at C++ speed without ever pulling the data into Python RAM.
+- **Dynamic Header Resizing:** Standard Qt `resizeColumnsToContents()` freezes the UI by scanning every row in a table. Instead, the table evaluates the exact `QFontMetrics` width of the header text and injects padding, rendering columns instantly regardless of dataset size.
 
 ---
 
