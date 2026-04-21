@@ -29,6 +29,6 @@ pip install -r requirements.pip
 
 :: Run the app
 echo Launching CSV Analyzer...
-python main.py
+python src\main.py
 
 pause

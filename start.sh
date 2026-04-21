@@ -1,16 +1,8 @@
 #!/bin/bash
 
-# Change to the directory of the script
 cd "$(dirname "$0")"
 
 echo "Starting CSV Analyzer Setup..."
-
-# Check if Python is installed
-if ! command -v python3 &> /dev/null
-then
-    echo "Python3 could not be found. Please install Python3 and try again."
-    exit
-fi
 
 # Create virtual environment if it doesn't exist
 if [ ! -d "venv" ]; then
@@ -28,4 +20,4 @@ pip install -r requirements.pip
 
 # Run the app
 echo "Launching CSV Analyzer..."
-python main.py
+python src/main.py

@@ -41,15 +41,18 @@ echo.
 :: Build the executable
 :: --noconsole   : No terminal window behind the GUI
 :: --onefile     : Single .exe output
-:: --add-data    : Bundle the stylesheet with the executable
+:: --add-data    : Bundle assets with the executable
+:: --icon        : Set the executable icon
 pyinstaller ^
     --noconsole ^
     --onefile ^
-    --add-data "style.qss;." ^
-    --add-data "grip_horizontal.png;." ^
-    --add-data "grip_vertical.png;." ^
+    --add-data "src\style.qss;." ^
+    --add-data "src\grip_horizontal.png;." ^
+    --add-data "src\grip_vertical.png;." ^
+    --add-data "src\icon.png;." ^
+    --icon "src\icon.ico" ^
     --name "CSV_Analyzer" ^
-    main.py
+    src\main.py
 
 echo.
 if exist "dist\CSV_Analyzer.exe" (

@@ -17,15 +17,12 @@ jobs:
           - os: windows-latest
             artifact-name: CSV_Analyzer-windows
             executable: dist/CSV_Analyzer.exe
-            separator: ";"
           - os: macos-latest
             artifact-name: CSV_Analyzer-macos
             executable: dist/CSV_Analyzer
-            separator: ":"
           - os: ubuntu-latest
             artifact-name: CSV_Analyzer-linux
             executable: dist/CSV_Analyzer
-            separator: ":"
 
     runs-on: ${{ matrix.os }}
 
@@ -50,9 +47,15 @@ jobs:
           pip install -r requirements.pip
           pip install pyinstaller
 
-      - name: Build executable
+      - name: Build executable (Windows)
+        if: runner.os == 'Windows'
         run: |
-          pyinstaller --noconsole --onefile --add-data "style.qss${{ matrix.separator }}." --add-data "grip_horizontal.png${{ matrix.separator }}." --add-data "grip_vertical.png${{ matrix.separator }}." --name "CSV_Analyzer" main.py
+          pyinstaller --noconsole --onefile --add-data "src\style.qss;." --add-data "src\grip_horizontal.png;." --add-data "src\grip_vertical.png;." --add-data "src\icon.png;." --icon "src\icon.ico" --name "CSV_Analyzer" src\main.py
+
+      - name: Build executable (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          pyinstaller --noconsole --onefile --add-data "src/style.qss:." --add-data "src/grip_horizontal.png:." --add-data "src/grip_vertical.png:." --add-data "src/icon.png:." --name "CSV_Analyzer" src/main.py
 
       - name: Make executable (Unix)
         if: runner.os != 'Windows'

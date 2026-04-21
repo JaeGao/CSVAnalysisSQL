@@ -6,4 +6,4 @@ if [ -d "venv" ]; then
 fi
 
 echo "Starting CSV Analyzer in watch mode. Press Ctrl+C to stop."
-watchmedo auto-restart --pattern="*.py;*.qss" --recursive --no-restart-on-command-exit -- python main.py
+watchmedo auto-restart --pattern="*.py;*.qss" --directory="src" --recursive --no-restart-on-command-exit -- python src/main.py

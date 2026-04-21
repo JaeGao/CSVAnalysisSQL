@@ -20,6 +20,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("SQL Editor Studio - CSV Analyzer")
+        self.setWindowIcon(QIcon(resource_path("icon.png")))
         self.resize(1200, 800)
         
         self.db = CSVDatabase()
@@ -57,7 +58,30 @@ class MainWindow(QMainWindow):
                 self.saved_scripts = {}
         else:
             self.saved_scripts = {
-                "Example: Grand Total Store Sales": "SELECT \n  Store,\n  COUNT(*) as Rows,\n  SUM(CAST(\"Qty Sold\" AS DOUBLE)) as Qty,\n  SUM(CAST(\"Qty Sold\" AS DOUBLE) * CAST(Price AS DOUBLE)) as \"Total Price\",\n  SUM(CASE WHEN CAST(\"Qty Sold\" AS DOUBLE) * CAST(Price AS DOUBLE) < 0 THEN CAST(\"Qty Sold\" AS DOUBLE) * CAST(Price AS DOUBLE) ELSE 0 END) as \"Neg Total\"\nFROM dataset\nGROUP BY ROLLUP(Store)\nORDER BY Store"
+                "Grand Total Store Sales": (
+                    "SELECT \n"
+                    "  COALESCE(Store, 'GRAND TOTAL') as Store,\n"
+                    "  COUNT(*) as Rows,\n"
+                    "  CAST(SUM(CAST(\"Qty Sold\" AS DECIMAL(18,2))) AS DECIMAL(18,2)) as Qty,\n"
+                    "  CAST(SUM(CAST(\"Qty Sold\" AS DECIMAL(18,2)) * CAST(Price AS DECIMAL(18,2))) AS DECIMAL(18,2)) as \"Total Price\",\n"
+                    "  CAST(SUM(CASE WHEN CAST(\"Qty Sold\" AS DECIMAL(18,2)) * CAST(Price AS DECIMAL(18,2)) < 0 THEN CAST(\"Qty Sold\" AS DECIMAL(18,2)) * CAST(Price AS DECIMAL(18,2)) ELSE 0 END) AS DECIMAL(18,2)) as \"Neg Total\"\n"
+                    "FROM dataset\n"
+                    "GROUP BY ROLLUP(Store)\n"
+                    "ORDER BY Store IS NULL, Store"
+                ),
+                "Store Sales (Date Range)": (
+                    "SELECT \n"
+                    "  COALESCE(Store, 'GRAND TOTAL') as Store,\n"
+                    "  COUNT(*) as Rows,\n"
+                    "  CAST(SUM(CAST(\"Qty Sold\" AS DECIMAL(18,2))) AS DECIMAL(18,2)) as Qty,\n"
+                    "  CAST(SUM(CAST(\"Qty Sold\" AS DECIMAL(18,2)) * CAST(Price AS DECIMAL(18,2))) AS DECIMAL(18,2)) as \"Total Price\",\n"
+                    "  CAST(SUM(CASE WHEN CAST(\"Qty Sold\" AS DECIMAL(18,2)) * CAST(Price AS DECIMAL(18,2)) < 0 THEN CAST(\"Qty Sold\" AS DECIMAL(18,2)) * CAST(Price AS DECIMAL(18,2)) ELSE 0 END) AS DECIMAL(18,2)) as \"Neg Total\"\n"
+                    "FROM dataset\n"
+                    "WHERE CAST(\"Invoice Date\" AS DATE) >= '2024-01-01'\n"
+                    "  AND CAST(\"Invoice Date\" AS DATE) <= '2026-04-01'\n"
+                    "GROUP BY ROLLUP(Store)\n"
+                    "ORDER BY Store IS NULL, Store"
+                ),
             }
             self.save_scripts()
 

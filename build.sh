@@ -1,5 +1,7 @@
 #!/bin/bash
 
+cd "$(dirname "$0")"
+
 echo "========================================="
 echo " CSV Analyzer - Build Script"
 echo "========================================="
@@ -20,8 +22,14 @@ echo ""
 # Build the executable
 # --noconsole   : No terminal window behind the GUI
 # --onefile     : Single executable output
-# --add-data    : Bundle the stylesheet (use : separator on Linux/Mac, ; on Windows)
-pyinstaller --noconsole --onefile --add-data "style.qss:." --add-data "grip_horizontal.png:." --add-data "grip_vertical.png:." --name "CSV_Analyzer" main.py
+# --add-data    : Bundle assets (use : separator on Linux/Mac, ; on Windows)
+pyinstaller --noconsole --onefile \
+    --add-data "src/style.qss:." \
+    --add-data "src/grip_horizontal.png:." \
+    --add-data "src/grip_vertical.png:." \
+    --add-data "src/icon.png:." \
+    --name "CSV_Analyzer" \
+    src/main.py
 
 echo ""
 echo "========================================="
