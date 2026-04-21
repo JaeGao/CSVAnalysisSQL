@@ -4,6 +4,30 @@ QMainWindow {
     background-color: #F8F9FA;
 }
 
+/* Splitter Handles - GTK-style dotted grip */
+QSplitter::handle {
+    background-color: #F8F9FA;
+    image: none;
+}
+
+QSplitter::handle:horizontal {
+    width: 5px;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='3' height='16'><circle cx='1.5' cy='3' r='1' fill='%23ADB5BD'/><circle cx='1.5' cy='8' r='1' fill='%23ADB5BD'/><circle cx='1.5' cy='13' r='1' fill='%23ADB5BD'/></svg>");
+    background-repeat: no-repeat;
+    background-position: center;
+}
+
+QSplitter::handle:vertical {
+    height: 5px;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='3'><circle cx='3' cy='1.5' r='1' fill='%23ADB5BD'/><circle cx='8' cy='1.5' r='1' fill='%23ADB5BD'/><circle cx='13' cy='1.5' r='1' fill='%23ADB5BD'/></svg>");
+    background-repeat: no-repeat;
+    background-position: center;
+}
+
+QSplitter::handle:hover {
+    background-color: #E9ECEF;
+}
+
 QWidget {
     font-family: 'Segoe UI', 'San Francisco', 'Inter', sans-serif;
     color: #212529; /* Dark gray/almost black for maximum readability */
