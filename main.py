@@ -5,7 +5,7 @@ import json
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QComboBox, QPushButton, QLabel, QTableView, QHeaderView,
-    QMessageBox, QSplitter, QListWidget, QPlainTextEdit, QTreeWidget, QTreeWidgetItem, QFileDialog, QInputDialog, QLineEdit, QCompleter
+    QMessageBox, QSplitter, QListWidget, QPlainTextEdit, QTreeWidget, QTreeWidgetItem, QFileDialog, QInputDialog, QLineEdit, QCompleter, QProgressBar, QMenu
 )
 from PyQt6.QtCore import Qt, QAbstractTableModel, QVariant, QModelIndex, QRunnable, QThreadPool, pyqtSignal, pyqtSlot, QObject, QTimer, QStringListModel
 from PyQt6.QtGui import QFont, QIcon, QTextCursor
@@ -46,6 +46,24 @@ class FetchWorker(QRunnable):
             self.signals.chunk_loaded.emit(self.chunk_idx, col_names, new_data)
         except Exception as e:
             print(f"Async fetch error: {e}")
+
+class LoadSignals(QObject):
+    finished = pyqtSignal(bool, str, str)
+
+class LoadWorker(QRunnable):
+    def __init__(self, db, file_path):
+        super().__init__()
+        self.db = db
+        self.file_path = file_path
+        self.signals = LoadSignals()
+
+    @pyqtSlot()
+    def run(self):
+        try:
+            success, err_or_table = self.db.load_csv(self.file_path)
+            self.signals.finished.emit(success, err_or_table, self.file_path)
+        except Exception as e:
+            self.signals.finished.emit(False, str(e), self.file_path)
 
 class CSVTableModel(QAbstractTableModel):
     def __init__(self, db, query, total_rows):
@@ -259,6 +277,8 @@ class MainWindow(QMainWindow):
         self.saved_scripts = {}
         self.load_scripts()
         
+        self.threadpool = QThreadPool()
+        
         # Load Stylesheet
         try:
             with open(resource_path("style.qss"), "r") as f:
@@ -327,7 +347,15 @@ class MainWindow(QMainWindow):
         self.schema_tree.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self.schema_tree.header().setSectionResizeMode(1, QHeaderView.ResizeMode.Interactive)
         self.schema_tree.setColumnWidth(1, 100)
+        self.schema_tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.schema_tree.customContextMenuRequested.connect(self.show_schema_context_menu)
         left_layout.addWidget(self.schema_tree)
+        
+        schema_btn_layout = QHBoxLayout()
+        self.remove_dataset_btn = QPushButton("Remove Selected Dataset")
+        self.remove_dataset_btn.clicked.connect(self.remove_selected_dataset)
+        schema_btn_layout.addWidget(self.remove_dataset_btn)
+        left_layout.addLayout(schema_btn_layout)
         
         # Saved Scripts
         left_layout.addWidget(QLabel("Saved Scripts:"))
@@ -383,6 +411,11 @@ class MainWindow(QMainWindow):
         action_layout = QHBoxLayout()
         self.status_label = QLabel("Ready")
         self.status_label.setWordWrap(True)
+        
+        self.loading_timer = QTimer()
+        self.loading_timer.timeout.connect(self.animate_loading_text)
+        self.loading_dots = 0
+        self.current_loading_file = ""
         
         self.export_btn = QPushButton("Export Results")
         self.export_btn.clicked.connect(self.export_results)
@@ -459,10 +492,24 @@ class MainWindow(QMainWindow):
         file_path = self.file_path_edit.text()
         if not file_path: return
         
-        self.status_label.setText(f"Loading {file_path} into DuckDB view...")
-        QApplication.processEvents()
+        self.current_loading_file = os.path.basename(file_path)
+        self.loading_dots = 0
+        self.animate_loading_text()
+        self.loading_timer.start(400)
         
-        success, err_or_table = self.db.load_csv(file_path)
+        worker = LoadWorker(self.db, file_path)
+        worker.signals.finished.connect(self._on_load_finished)
+        self.threadpool.start(worker)
+
+    def animate_loading_text(self):
+        self.loading_dots = (self.loading_dots + 1) % 4
+        dots = "." * self.loading_dots
+        self.status_label.setText(f"Loading {self.current_loading_file}{dots}")
+
+    @pyqtSlot(bool, str, str)
+    def _on_load_finished(self, success, err_or_table, file_path):
+        self.loading_timer.stop()
+            
         if not success:
             QMessageBox.critical(self, "Load Error", err_or_table)
             self.status_label.setText("Load failed.")
@@ -473,6 +520,39 @@ class MainWindow(QMainWindow):
         self.update_autocomplete()
             
         self.status_label.setText(f"Loaded {file_path}. You can now query '{table_name}'.")
+
+    def remove_selected_dataset(self):
+        item = self.schema_tree.currentItem()
+        if not item or item.parent() is not None:
+            QMessageBox.warning(self, "Remove Dataset", "Please select a dataset (top-level item) to remove.")
+            return
+            
+        table_name = item.text(0)
+        self.remove_dataset(table_name)
+
+    def show_schema_context_menu(self, position):
+        item = self.schema_tree.itemAt(position)
+        if not item or item.parent() is not None:
+            return
+            
+        table_name = item.text(0)
+        menu = QMenu()
+        remove_action = menu.addAction(f"Remove '{table_name}'")
+        action = menu.exec(self.schema_tree.mapToGlobal(position))
+        
+        if action == remove_action:
+            self.remove_dataset(table_name)
+            
+    def remove_dataset(self, table_name):
+        reply = QMessageBox.question(self, "Confirm Remove", f"Are you sure you want to remove the dataset '{table_name}'?", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        if reply == QMessageBox.StandardButton.Yes:
+            success, err = self.db.remove_table(table_name)
+            if success:
+                self.refresh_schema_tree()
+                self.update_autocomplete()
+                self.status_label.setText(f"Removed dataset '{table_name}'.")
+            else:
+                QMessageBox.critical(self, "Remove Error", err)
 
     def refresh_schema_tree(self):
         self.schema_tree.clear()

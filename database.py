@@ -42,6 +42,16 @@ class CSVDatabase:
         except Exception as e:
             return False, str(e)
 
+    def remove_table(self, table_name):
+        """
+        Drops the specified table from the database.
+        """
+        try:
+            self.con.execute(f"DROP TABLE IF EXISTS {table_name}")
+            return True, None
+        except Exception as e:
+            return False, str(e)
+
     def get_tables(self):
         """
         Returns a list of all loaded tables.
