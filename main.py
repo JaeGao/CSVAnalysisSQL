@@ -266,6 +266,10 @@ class MainWindow(QMainWindow):
         self.schema_tree = QTreeWidget()
         self.schema_tree.setHeaderLabels(["Column Name", "Type"])
         self.schema_tree.setAlternatingRowColors(True)
+        self.schema_tree.header().setStretchLastSection(False)
+        self.schema_tree.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.schema_tree.header().setSectionResizeMode(1, QHeaderView.ResizeMode.Interactive)
+        self.schema_tree.setColumnWidth(1, 100)
         left_layout.addWidget(self.schema_tree)
         
         # Saved Scripts
@@ -351,11 +355,11 @@ class MainWindow(QMainWindow):
         
         main_splitter.addWidget(self.table_view)
         main_splitter.setStretchFactor(0, 1)
-        main_splitter.setStretchFactor(1, 2)
+        main_splitter.setStretchFactor(1, 1)
         
         top_splitter.addWidget(main_splitter)
         top_splitter.setStretchFactor(0, 1)
-        top_splitter.setStretchFactor(1, 3)
+        top_splitter.setStretchFactor(1, 2)
         
         main_layout.addWidget(top_splitter)
 
