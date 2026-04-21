@@ -337,16 +337,33 @@ class MainWindow(QMainWindow):
         
         if item.parent() is not None:
             # It's a column
-            col_name = item.text(0)
-            copy_col_action = menu.addAction(f"Copy '{col_name}'")
+            selected_items = self.schema_tree.selectedItems()
+            col_items = [it for it in selected_items if it.parent() is not None]
+            
+            # If clicked item is not in selection, use just the clicked item
+            if item not in col_items:
+                col_items = [item]
+                
+            col_names = [it.text(0) for it in col_items]
+            
+            if len(col_names) > 1:
+                action_text = f"Copy {len(col_names)} Columns"
+            else:
+                action_text = f"Copy '{col_names[0]}'"
+                
+            copy_col_action = menu.addAction(action_text)
             action = menu.exec(self.schema_tree.mapToGlobal(position))
+            
             if action == copy_col_action:
-                QApplication.clipboard().setText(col_name)
-                self.status_label.setText(f"Copied column '{col_name}' to clipboard.")
+                import re
+                formatted_cols = [f'"{c}"' if not re.match(r'^[a-zA-Z0-9_]+$', c) else c for c in col_names]
+                QApplication.clipboard().setText(", ".join(formatted_cols))
+                self.status_label.setText(f"Copied {len(col_names)} column(s) to clipboard.")
             return
             
         table_name = item.text(0)
         copy_action = menu.addAction("Copy Schema")
+        query_top_action = menu.addAction("Query Top 500 Rows")
         remove_action = menu.addAction(f"Remove '{table_name}'")
         
         action = menu.exec(self.schema_tree.mapToGlobal(position))
@@ -355,6 +372,10 @@ class MainWindow(QMainWindow):
             self.remove_dataset(table_name)
         elif action == copy_action:
             self.copy_schema_to_clipboard(table_name)
+        elif action == query_top_action:
+            query = f'SELECT * FROM "{table_name}" LIMIT 500;'
+            self.sql_editor.setPlainText(query)
+            self.execute_query()
             
     def copy_all_schemas(self):
         tables = self.db.get_tables()
