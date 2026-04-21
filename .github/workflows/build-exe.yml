@@ -1,16 +1,30 @@
-name: Build Windows Executable
+name: Build Executables
 
 on:
-  # Trigger manually from the Actions tab
   workflow_dispatch:
-  # Trigger on tagged releases
   push:
     tags:
       - 'v*'
 
 jobs:
-  build-windows:
-    runs-on: windows-latest
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            artifact-name: CSV_Analyzer-windows
+            executable: dist/CSV_Analyzer.exe
+            separator: ";"
+          - os: macos-latest
+            artifact-name: CSV_Analyzer-macos
+            executable: dist/CSV_Analyzer
+            separator: ":"
+          - os: ubuntu-latest
+            artifact-name: CSV_Analyzer-linux
+            executable: dist/CSV_Analyzer
+            separator: ":"
+
+    runs-on: ${{ matrix.os }}
 
     steps:
       - name: Checkout repository
@@ -21,7 +35,13 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install dependencies
+      - name: Install system dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libegl1
+
+      - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.pip
@@ -29,16 +49,20 @@ jobs:
 
       - name: Build executable
         run: |
-          pyinstaller --noconsole --onefile --add-data "style.qss;." --name "CSV_Analyzer" main.py
+          pyinstaller --noconsole --onefile --add-data "style.qss${{ matrix.separator }}." --name "CSV_Analyzer" main.py
+
+      - name: Make executable (Unix)
+        if: runner.os != 'Windows'
+        run: chmod +x dist/CSV_Analyzer
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: CSV_Analyzer-windows
-          path: dist/CSV_Analyzer.exe
+          name: ${{ matrix.artifact-name }}
+          path: ${{ matrix.executable }}
 
       - name: Attach to release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/CSV_Analyzer.exe
+          files: ${{ matrix.executable }}
