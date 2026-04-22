@@ -122,9 +122,16 @@ class CSVDatabase:
         """
         Creates a DuckDB table from a single sheet of an XLSX workbook.
         Uses DuckDB's native read_xlsx (C++ reader via the Excel extension)
-        for maximum performance — no Python-level row iteration.
+        for maximum performance -- no Python-level row iteration.
 
         Table name: {sanitized_filename}_{sanitized_sheetname}
+
+        If native type inference fails (e.g. a column that is mostly empty
+        so DuckDB infers DOUBLE but some rows contain UUID strings), falls back
+        to a column-level type recovery pass: all data is loaded as VARCHAR to
+        preserve every row, then each column is probed with TRY_CAST to recover
+        its natural type. Columns where any non-empty value cannot be cast remain
+        as VARCHAR. No rows are dropped.
         """
         file_base = self.sanitize_table_name(file_path)
         sheet_sanitized = re.sub(r'[^a-zA-Z0-9_]', '_', sheet_name)
@@ -132,6 +139,7 @@ class CSVDatabase:
         escaped_path = file_path.replace("'", "''")
         escaped_sheet = sheet_name.replace("'", "''")
 
+        # Pass 1: native type inference (fast path for clean sheets)
         try:
             self._drop_object(table_name)
             self.con.execute(
@@ -139,8 +147,72 @@ class CSVDatabase:
                 f"read_xlsx('{escaped_path}', sheet='{escaped_sheet}')"
             )
             return True, table_name
+        except Exception:
+            pass
+
+        # Pass 2: column-level type recovery.
+        # Load everything as VARCHAR into a staging table to guarantee all rows
+        # are preserved, then probe each column with TRY_CAST to recover its
+        # natural type. Columns where any non-empty value fails all candidates
+        # remain as VARCHAR.
+        staging = f"__xlsx_stage_{table_name}"
+        try:
+            self._drop_object(staging)
+            self.con.execute(
+                f"CREATE TABLE \"{staging}\" AS SELECT * FROM "
+                f"read_xlsx('{escaped_path}', sheet='{escaped_sheet}', all_varchar=true)"
+            )
+            col_exprs = self._infer_column_casts(staging)
+            self._drop_object(table_name)
+            self.con.execute(
+                f'CREATE TABLE "{table_name}" AS SELECT {col_exprs} FROM "{staging}"'
+            )
+            return True, table_name
         except Exception as e:
             return False, str(e)
+        finally:
+            self._drop_object(staging)
+
+    def _infer_column_casts(self, staging_table):
+        """
+        For each column in the staging table (all VARCHAR), determine the most
+        specific type that is safe to apply without losing any non-empty values.
+        Returns a comma-separated SELECT expression string.
+
+        Type candidates are checked in preference order:
+          BIGINT -> DOUBLE -> DATE -> TIMESTAMP -> VARCHAR (default)
+        """
+        cols = self.get_schema(staging_table)
+        type_candidates = ["BIGINT", "DOUBLE", "DATE", "TIMESTAMP"]
+        exprs = []
+
+        for col in cols:
+            name = col['name']
+            quoted = f'"{name}"'
+            chosen_type = None
+
+            for t in type_candidates:
+                try:
+                    # Count non-empty values where TRY_CAST returns NULL,
+                    # meaning the value exists but cannot be converted.
+                    fail_count = self.con.execute(
+                        f'SELECT COUNT(*) FROM "{staging_table}" '
+                        f'WHERE {quoted} IS NOT NULL '
+                        f"AND TRIM({quoted}) != '' "
+                        f'AND TRY_CAST({quoted} AS {t}) IS NULL'
+                    ).fetchone()[0]
+                    if fail_count == 0:
+                        chosen_type = t
+                        break
+                except Exception:
+                    continue
+
+            if chosen_type:
+                exprs.append(f'TRY_CAST({quoted} AS {chosen_type}) AS {quoted}')
+            else:
+                exprs.append(quoted)
+
+        return ", ".join(exprs)
 
     # ------------------------------------------------------------------
     # Table Management
