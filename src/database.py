@@ -1,6 +1,8 @@
 import duckdb
 import os
+import shutil
 import tempfile
+import zipfile
 import re
 
 from utils import resource_path
@@ -10,35 +12,60 @@ class CSVDatabase:
     def __init__(self):
         # Create a persistent temporary database file to avoid RAM exhaustion
         self.db_path = tempfile.mktemp(prefix="csv_analyzer_", suffix=".duckdb")
+        self._ext_temp_dir = None
         self.con = duckdb.connect(database=self.db_path, read_only=False)
         self._load_excel_extension()
 
     def _load_excel_extension(self):
         """
-        Load the bundled DuckDB Excel extension so that read_xlsx is available.
-        In development the extension is loaded from the system/user DuckDB directory.
-        In a PyInstaller bundle the extension is loaded from the bundled 'extensions/'
-        directory staged by src/bundle_ext.py.
+        Load the DuckDB Excel extension so that read_xlsx is available.
+
+        The extension is bundled as excel_ext.zip by src/bundle_ext.py to
+        prevent PyInstaller's macOS codesign pipeline from attempting to
+        re-sign the Mach-O plugin file (which it cannot do successfully).
+
+        At runtime the zip is extracted to a session-scoped temp directory
+        that preserves the version/platform subdirectory structure DuckDB
+        expects. extension_directory is then pointed at that base directory.
+
+        Falls back to INSTALL excel for development environments where
+        bundle_ext.py has not been run.
         """
-        try:
-            ext_dir = resource_path("extensions")
-            if os.path.isdir(ext_dir):
-                # Bundled path — tell DuckDB exactly where to look
-                safe_dir = ext_dir.replace("\\", "/")
+        zip_path = os.path.join(resource_path("extensions"), "excel_ext.zip")
+
+        if os.path.isfile(zip_path):
+            try:
+                self._ext_temp_dir = tempfile.mkdtemp(prefix="csv_analyzer_ext_")
+                with zipfile.ZipFile(zip_path, "r") as zf:
+                    zf.extractall(self._ext_temp_dir)
+                safe_dir = self._ext_temp_dir.replace("\\", "/")
                 self.con.execute(f"SET extension_directory = '{safe_dir}'")
+                self.con.execute("LOAD excel")
+                return
+            except Exception as e:
+                print(f"Warning: Could not load bundled Excel extension: {e}")
+
+        # Fallback: online install for development or if zip extraction fails.
+        try:
+            self.con.execute("INSTALL excel")
             self.con.execute("LOAD excel")
         except Exception as e:
-            # Extension not available — xlsx loading will fail gracefully later
             print(f"Warning: Could not load DuckDB Excel extension: {e}")
 
     def close(self):
-        """Clean up the DuckDB connection and delete the temporary file."""
+        """Clean up the DuckDB connection, temp database file, and extension temp dir."""
         try:
             self.con.close()
             if os.path.exists(self.db_path):
                 os.remove(self.db_path)
         except Exception as e:
             print(f"Error cleaning up database: {e}")
+
+        if self._ext_temp_dir and os.path.exists(self._ext_temp_dir):
+            try:
+                shutil.rmtree(self._ext_temp_dir)
+            except Exception as e:
+                print(f"Error cleaning up extension temp directory: {e}")
 
     @staticmethod
     def sanitize_table_name(filename):
