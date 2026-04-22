@@ -6,16 +6,61 @@ import sqlparse
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QComboBox, QPushButton, QLabel, QTableView, QHeaderView,
-    QMessageBox, QSplitter, QListWidget, QPlainTextEdit, QTreeWidget, QTreeWidgetItem, QFileDialog, QInputDialog, QLineEdit, QCompleter, QProgressBar, QMenu, QAbstractItemView
+    QMessageBox, QSplitter, QListWidget, QPlainTextEdit, QTreeWidget, QTreeWidgetItem,
+    QFileDialog, QInputDialog, QLineEdit, QCompleter, QProgressBar, QMenu,
+    QAbstractItemView, QDialog, QDialogButtonBox
 )
 from PyQt6.QtCore import Qt, QThreadPool, pyqtSlot, QTimer
 from PyQt6.QtGui import QFont, QIcon, QShortcut, QKeySequence
 
 from database import CSVDatabase
 from utils import resource_path
-from workers import LoadWorker
+from workers import LoadWorker, XlsxSheetScanWorker, XlsxLoadWorker
 from models import CSVTableModel
 from editor import SQLEditor
+
+
+
+class SheetSelectorDialog(QDialog):
+    """Modal dialog for selecting one or more sheets from an XLSX workbook."""
+
+    def __init__(self, sheet_names, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Select Sheets")
+        self.setMinimumWidth(340)
+        self.setMinimumHeight(320)
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(8)
+
+        layout.addWidget(QLabel("Select the sheets to load:"))
+
+        self._list = QListWidget()
+        self._list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self._list.addItems(sheet_names)
+        # Pre-select all sheets
+        self._list.selectAll()
+        layout.addWidget(self._list)
+
+        btn_row = QHBoxLayout()
+        sel_all_btn = QPushButton("Select All")
+        sel_all_btn.clicked.connect(self._list.selectAll)
+        desel_all_btn = QPushButton("Deselect All")
+        desel_all_btn.clicked.connect(self._list.clearSelection)
+        btn_row.addWidget(sel_all_btn)
+        btn_row.addWidget(desel_all_btn)
+        layout.addLayout(btn_row)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def selected_sheets(self):
+        return [item.text() for item in self._list.selectedItems()]
+
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -101,9 +146,9 @@ class MainWindow(QMainWindow):
         left_layout.setContentsMargins(0, 0, 0, 0)
         
         # File loader - single button
-        load_csv_btn = QPushButton("Load CSV")
-        load_csv_btn.clicked.connect(self.load_csv)
-        left_layout.addWidget(load_csv_btn)
+        load_file_btn = QPushButton("Load File")
+        load_file_btn.clicked.connect(self.load_file)
+        left_layout.addWidget(load_file_btn)
         
         # Splitter between schema and saved scripts
         left_splitter = QSplitter(Qt.Orientation.Vertical)
@@ -255,19 +300,88 @@ class MainWindow(QMainWindow):
         parent_splitter.setStretchFactor(0, 40)
         parent_splitter.setStretchFactor(1, 60)
 
-    def load_csv(self):
-        file_path, _ = QFileDialog.getOpenFileName(self, "Select CSV File", "", "CSV Files (*.csv);;All Files (*)")
+    def load_file(self):
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Select File", "",
+            "Supported Files (*.csv *.xlsx);;CSV Files (*.csv);;Excel Files (*.xlsx);;All Files (*)"
+        )
         if not file_path:
             return
-        
+
+        ext = os.path.splitext(file_path)[1].lower()
+        if ext == ".xlsx":
+            self._start_xlsx_scan(file_path)
+        else:
+            self._start_csv_load(file_path)
+
+    def _start_csv_load(self, file_path):
         self.current_loading_file = os.path.basename(file_path)
         self.loading_dots = 0
         self.animate_loading_text()
         self.loading_timer.start(400)
-        
+
         worker = LoadWorker(self.db, file_path)
         worker.signals.finished.connect(self._on_load_finished)
         self.threadpool.start(worker)
+
+    def _start_xlsx_scan(self, file_path):
+        self.current_loading_file = os.path.basename(file_path)
+        self.status_label.setText(f"Reading sheet list from {self.current_loading_file}...")
+        QApplication.processEvents()
+
+        worker = XlsxSheetScanWorker(self.db, file_path)
+        worker.signals.finished.connect(self._on_xlsx_scan_finished)
+        self.threadpool.start(worker)
+
+    @pyqtSlot(str, list)
+    def _on_xlsx_scan_finished(self, file_path, sheets):
+        if not sheets:
+            QMessageBox.critical(self, "Load Error",
+                f"Could not read sheet names from {os.path.basename(file_path)}.\n"
+                "Ensure the file is a valid XLSX workbook.")
+            self.status_label.setText("Load failed.")
+            return
+
+        if len(sheets) == 1:
+            # Single sheet — no dialog needed
+            selected = sheets
+        else:
+            dialog = SheetSelectorDialog(sheets, self)
+            if dialog.exec() != QDialog.DialogCode.Accepted:
+                self.status_label.setText("Load cancelled.")
+                return
+            selected = dialog.selected_sheets()
+            if not selected:
+                self.status_label.setText("No sheets selected.")
+                return
+
+        self._start_xlsx_load(file_path, selected)
+
+    def _start_xlsx_load(self, file_path, sheet_names):
+        self.current_loading_file = os.path.basename(file_path)
+        self.loading_dots = 0
+        self.animate_loading_text()
+        self.loading_timer.start(400)
+
+        worker = XlsxLoadWorker(self.db, file_path, sheet_names)
+        worker.signals.finished.connect(self._on_xlsx_load_finished)
+        self.threadpool.start(worker)
+
+    @pyqtSlot(bool, str, str)
+    def _on_xlsx_load_finished(self, success, result, file_path):
+        self.loading_timer.stop()
+        if not success:
+            QMessageBox.critical(self, "Load Error", result)
+            self.status_label.setText("Load failed.")
+            return
+
+        self.refresh_schema_tree()
+        self.update_autocomplete()
+        table_names = result
+        self.status_label.setText(
+            f"Loaded {os.path.basename(file_path)}: tables {table_names}."
+        )
+
 
     def refresh_scripts_list(self):
         self.scripts_list.clear()

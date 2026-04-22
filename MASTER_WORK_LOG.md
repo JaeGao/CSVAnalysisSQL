@@ -7,12 +7,13 @@ This document serves as the master record for the `CSV Analyzer SQL` application
 ## 1. Implementation Summary
 `CSV Analyzer SQL` is a robust PyQt6 application designed to ingest and analyze massive CSV datasets using SQL. 
 To ensure maintainability and a clean project root, the application uses a modular architecture with all core code located in the `src/` directory:
-- **`src/database.py`**: Handles all DuckDB interactions, schema fetching, robust CSV ingestion, and query execution.
-- **`src/workers.py`**: Contains background thread logic (`QRunnable`) to prevent UI blocking.
+- **`src/database.py`**: Handles all DuckDB interactions, schema fetching, robust CSV/XLSX ingestion, and query execution.
+- **`src/workers.py`**: Contains background thread logic (`QRunnable`) to prevent UI blocking. Includes workers for CSV load, XLSX sheet scanning, and XLSX data loading.
 - **`src/models.py`**: Contains the virtualized data model (`CSVTableModel`) for the Qt Table View.
 - **`src/editor.py`**: Encapsulates the custom `SQLEditor` component with advanced autocomplete functionality.
 - **`src/utils.py`**: Contains utility functions like `resource_path()` for cross-platform PyInstaller asset resolution.
-- **`src/main.py`**: The application entry point and `MainWindow` UI composition layer.
+- **`src/main.py`**: The application entry point, `MainWindow` UI composition, and `SheetSelectorDialog`.
+- **`src/bundle_ext.py`**: Standalone build utility that pre-downloads the DuckDB Excel extension binary and stages it to `src/extensions/` before PyInstaller runs.
 
 ---
 
@@ -61,6 +62,13 @@ During development, several critical bottlenecks and crashes were encountered. H
 - **The Problem:** Executing `DROP TABLE IF EXISTS` throws a Catalog Error if the object is actually a View (and vice-versa). This crashed the app when saving views or reloading CSVs.
 - **The Solution:** Implemented a `_drop_object` wrapper that sequentially catches exceptions for both `DROP VIEW IF EXISTS` and `DROP TABLE IF EXISTS` to safely overwrite references.
 
+### Pitfall 10: XLSX Loading Performance and Offline Extension Bundling
+- **The Problem:** Adding XLSX support required choosing a loading strategy. The obvious path (`openpyxl` or `pandas.read_excel()`) processes rows through the Python GIL, reproducing the same performance problems as the original CSV loading approach (30-60+ seconds for large files, UI appears frozen).
+- **The Solution:** Used DuckDB's native `read_xlsx` C++ reader via the `excel` extension, which reads and parses XLSX files entirely in native code, bypassing Python and streaming directly into DuckDB's columnar memory format. This is the same performance tier as `read_csv_auto`.
+- **The Bundling Problem:** DuckDB extensions are normally downloaded at runtime from `extensions.duckdb.org`. In a PyInstaller bundle the app must work offline, so this download cannot happen at user launch time.
+- **The Bundling Solution:** Introduced `src/bundle_ext.py`, a build-time utility script. It calls `INSTALL excel` once during the build process, queries DuckDB for the installed binary path, and copies the `.duckdb_extension` file into `src/extensions/`. PyInstaller bundles this directory via `--add-data`. At runtime, `database.py` sets `extension_directory` to the bundled path before calling `LOAD excel`. Each CI runner (Windows/macOS/Linux) produces the correct platform-specific binary automatically. `src/extensions/` is gitignored.
+- **Sheet Name Enumeration:** `openpyxl` is still used, but only to read sheet names via `load_workbook(read_only=True).sheetnames`, which parses only the ZIP manifest, not row data. This is instantaneous regardless of file size. No row-level data ever passes through openpyxl.
+
 ---
 
 ## 3. UI/UX and Quality of Life Enhancements
@@ -92,8 +100,9 @@ Beyond crash prevention, the following systemic optimizations exist:
 
 To ensure seamless distribution across operating systems, the project utilizes:
 - **PyInstaller:** Configured via `build.bat` and `build.sh` to package the application as a standalone, single-file executable `--onefile` with no console `--noconsole`.
-- **Resource Bundling:** All styling assets (`style.qss`), scripts (`scripts.json`), icons (`icon.ico`, `icon.png`), and UI control assets (`grip_horizontal.png`) are natively injected via `--add-data`.
-- **GitHub Actions:** A fully automated `build-exe.yml` workflow triggers on tags, compiling Windows, macOS, and Linux executables concurrently and attaching them to GitHub Releases.
+- **Resource Bundling:** All styling assets (`style.qss`), scripts (`scripts.json`), icons (`icon.ico`, `icon.png`), UI control assets (`grip_horizontal.png`), and the DuckDB Excel extension binary (`src/extensions/`) are natively injected via `--add-data`.
+- **Extension Pre-Bundling:** `src/bundle_ext.py` must be run before PyInstaller in every build environment. It downloads the platform-correct DuckDB `excel` extension binary once and stages it for bundling. This ensures XLSX loading works fully offline in the distributed executable.
+- **GitHub Actions:** A fully automated `build-exe.yml` workflow triggers on tags, compiling Windows, macOS, and Linux executables concurrently and attaching them to GitHub Releases. Each runner executes `bundle_ext.py` as a dedicated step before PyInstaller.
 
 ---
 
@@ -116,3 +125,7 @@ To prevent regressions, adhere to the following rules when modifying this codeba
 > [!NOTE]
 > **4. Resource Cleanup**
 > Ensure `CSVDatabase.close()` is always called on exit. Failure to do so will leave multi-gigabyte `.duckdb` temp files stranded in the user's `/tmp` directory.
+
+> [!WARNING]
+> **5. Adding New File Format Support**
+> Never use Python-level row-iteration libraries (openpyxl row reads, pandas, csv.reader) to ingest data into DuckDB. Always find a native DuckDB reader (`read_csv_auto`, `read_xlsx`, `read_parquet`, etc.) or a DuckDB extension that provides one. Python-level row iteration blocks the GIL, produces the same UI freeze and memory problems as the original CSV approach, and is orders of magnitude slower than the native C++ readers. If a DuckDB extension is required, add it to `bundle_ext.py` and `--add-data` in all build scripts.

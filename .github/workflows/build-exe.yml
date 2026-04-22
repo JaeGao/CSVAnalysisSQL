@@ -47,15 +47,18 @@ jobs:
           pip install -r requirements.pip
           pip install pyinstaller
 
+      - name: Pre-install DuckDB Excel extension
+        run: python src/bundle_ext.py
+
       - name: Build executable (Windows)
         if: runner.os == 'Windows'
         run: |
-          pyinstaller --noconsole --onefile --add-data "src\style.qss;." --add-data "src\grip_horizontal.png;." --add-data "src\grip_vertical.png;." --add-data "src\icon.png;." --add-data "src\scripts.json;." --icon "src\icon.ico" --name "CSV_Analyzer" src\main.py
+          pyinstaller --noconsole --onefile --add-data "src\style.qss;." --add-data "src\grip_horizontal.png;." --add-data "src\grip_vertical.png;." --add-data "src\icon.png;." --add-data "src\scripts.json;." --add-data "src\extensions;extensions" --icon "src\icon.ico" --name "CSV_Analyzer" src\main.py
 
       - name: Build executable (Unix)
         if: runner.os != 'Windows'
         run: |
-          pyinstaller --noconsole --onefile --add-data "src/style.qss:." --add-data "src/grip_horizontal.png:." --add-data "src/grip_vertical.png:." --add-data "src/icon.png:." --add-data "src/scripts.json:." --name "CSV_Analyzer" src/main.py
+          pyinstaller --noconsole --onefile --add-data "src/style.qss:." --add-data "src/grip_horizontal.png:." --add-data "src/grip_vertical.png:." --add-data "src/icon.png:." --add-data "src/scripts.json:." --add-data "src/extensions:extensions" --name "CSV_Analyzer" src/main.py
 
       - name: Make executable (Unix)
         if: runner.os != 'Windows'

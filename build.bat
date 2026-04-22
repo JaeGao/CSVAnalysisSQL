@@ -35,6 +35,10 @@ echo Installing PyInstaller...
 pip install pyinstaller
 
 echo.
+echo Pre-installing DuckDB Excel extension...
+python src\bundle_ext.py
+
+echo.
 echo Building executable...
 echo.
 
@@ -51,6 +55,7 @@ pyinstaller ^
     --add-data "src\grip_vertical.png;." ^
     --add-data "src\icon.png;." ^
     --add-data "src\scripts.json;." ^
+    --add-data "src\extensions;extensions" ^
     --icon "src\icon.ico" ^
     --name "CSV_Analyzer" ^
     src\main.py
