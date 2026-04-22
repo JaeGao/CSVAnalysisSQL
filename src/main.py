@@ -3,6 +3,7 @@ import os
 import glob
 import json
 import sqlparse
+import time
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QComboBox, QPushButton, QLabel, QTableView, QHeaderView,
@@ -15,7 +16,7 @@ from PyQt6.QtGui import QFont, QIcon, QShortcut, QKeySequence
 
 from database import CSVDatabase
 from utils import resource_path
-from workers import LoadWorker, XlsxSheetScanWorker, XlsxLoadWorker
+from workers import LoadWorker, XlsxSheetScanWorker, XlsxLoadWorker, QueryExecutionWorker
 from models import CSVTableModel
 from editor import SQLEditor
 
@@ -146,9 +147,9 @@ class MainWindow(QMainWindow):
         left_layout.setContentsMargins(0, 0, 0, 0)
         
         # File loader - single button
-        load_file_btn = QPushButton("Load File")
-        load_file_btn.clicked.connect(self.load_file)
-        left_layout.addWidget(load_file_btn)
+        self.load_file_btn = QPushButton("Load File")
+        self.load_file_btn.clicked.connect(self.on_load_file_clicked)
+        left_layout.addWidget(self.load_file_btn)
         
         # Splitter between schema and saved scripts
         left_splitter = QSplitter(Qt.Orientation.Vertical)
@@ -273,12 +274,12 @@ class MainWindow(QMainWindow):
         self.execute_btn = QPushButton("Execute (F5)")
         self.execute_btn.setObjectName("executeBtn")
         self.execute_btn.setMinimumWidth(150)
-        self.execute_btn.clicked.connect(self.execute_query)
+        self.execute_btn.clicked.connect(self.on_execute_clicked)
         
         self.execute_shortcut = QShortcut(QKeySequence("Ctrl+Return"), self)
-        self.execute_shortcut.activated.connect(self.execute_query)
+        self.execute_shortcut.activated.connect(self.on_execute_clicked)
         self.execute_shortcut_enter = QShortcut(QKeySequence("Ctrl+Enter"), self)
-        self.execute_shortcut_enter.activated.connect(self.execute_query)
+        self.execute_shortcut_enter.activated.connect(self.on_execute_clicked)
         self.execute_btn.setShortcut("F5")
         
         action_layout.addWidget(self.status_label)
@@ -300,6 +301,18 @@ class MainWindow(QMainWindow):
         parent_splitter.setStretchFactor(0, 40)
         parent_splitter.setStretchFactor(1, 60)
 
+    def on_load_file_clicked(self):
+        if getattr(self, 'is_loading_file', False):
+            self.cancel_operation()
+        else:
+            self.load_file()
+
+    def on_execute_clicked(self):
+        if getattr(self, 'is_executing_query', False):
+            self.cancel_operation()
+        else:
+            self.execute_query()
+
     def load_file(self):
         file_path, _ = QFileDialog.getOpenFileName(
             self, "Select File", "",
@@ -317,6 +330,7 @@ class MainWindow(QMainWindow):
     def _start_csv_load(self, file_path):
         self.current_loading_file = os.path.basename(file_path)
         self.loading_dots = 0
+        self.set_ui_loading_state(True, operation="load")
         self.animate_loading_text()
         self.loading_timer.start(400)
 
@@ -327,6 +341,7 @@ class MainWindow(QMainWindow):
     def _start_xlsx_scan(self, file_path):
         self.current_loading_file = os.path.basename(file_path)
         self.status_label.setText(f"Reading sheet list from {self.current_loading_file}...")
+        self.set_ui_loading_state(True, operation="load")
         QApplication.processEvents()
 
         worker = XlsxSheetScanWorker(self.db, file_path)
@@ -335,6 +350,7 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot(str, list)
     def _on_xlsx_scan_finished(self, file_path, sheets):
+        self.set_ui_loading_state(False)
         if not sheets:
             QMessageBox.critical(self, "Load Error",
                 f"Could not read sheet names from {os.path.basename(file_path)}.\n"
@@ -360,6 +376,7 @@ class MainWindow(QMainWindow):
     def _start_xlsx_load(self, file_path, sheet_names):
         self.current_loading_file = os.path.basename(file_path)
         self.loading_dots = 0
+        self.set_ui_loading_state(True, operation="load")
         self.animate_loading_text()
         self.loading_timer.start(400)
 
@@ -370,9 +387,13 @@ class MainWindow(QMainWindow):
     @pyqtSlot(bool, str, str)
     def _on_xlsx_load_finished(self, success, result, file_path):
         self.loading_timer.stop()
+        self.set_ui_loading_state(False)
         if not success:
-            QMessageBox.critical(self, "Load Error", result)
-            self.status_label.setText("Load failed.")
+            if 'Interrupt' in result or 'interrupt' in result:
+                self.status_label.setText("Load canceled by user.")
+            else:
+                QMessageBox.critical(self, "Load Error", result)
+                self.status_label.setText("Load failed.")
             return
 
         self.refresh_schema_tree()
@@ -421,10 +442,14 @@ class MainWindow(QMainWindow):
     @pyqtSlot(bool, str, str)
     def _on_load_finished(self, success, err_or_table, file_path):
         self.loading_timer.stop()
+        self.set_ui_loading_state(False)
             
         if not success:
-            QMessageBox.critical(self, "Load Error", err_or_table)
-            self.status_label.setText("Load failed.")
+            if 'Interrupt' in err_or_table or 'interrupt' in err_or_table:
+                self.status_label.setText("Load canceled by user.")
+            else:
+                QMessageBox.critical(self, "Load Error", err_or_table)
+                self.status_label.setText("Load failed.")
             return
             
         table_name = err_or_table
@@ -604,21 +629,78 @@ class MainWindow(QMainWindow):
 
 
 
+    def set_ui_loading_state(self, is_loading, operation=None):
+        """Disables UI elements to prevent concurrent operations during load or query."""
+        is_enabled = not is_loading
+        self.export_btn.setEnabled(is_enabled)
+        self.copy_all_btn.setEnabled(is_enabled)
+        self.remove_dataset_btn.setEnabled(is_enabled)
+        self.schema_tree.setEnabled(is_enabled)
+        self.history_combo.setEnabled(is_enabled)
+        
+        if is_loading:
+            if operation == "query":
+                self.is_executing_query = True
+                self.execute_btn.setText("Cancel Query")
+                self.execute_btn.setEnabled(True)
+                self.load_file_btn.setEnabled(False)
+            elif operation == "load":
+                self.is_loading_file = True
+                self.load_file_btn.setText("Cancel Load")
+                self.load_file_btn.setEnabled(True)
+                self.execute_btn.setEnabled(False)
+        else:
+            self.is_executing_query = False
+            self.is_loading_file = False
+            self.execute_btn.setText("Execute (F5)")
+            self.execute_btn.setEnabled(True)
+            self.load_file_btn.setText("Load File")
+            self.load_file_btn.setEnabled(True)
+        
+    def cancel_operation(self):
+        self.db.interrupt()
+        self.status_label.setText("Canceling...")
+        if getattr(self, 'is_executing_query', False):
+            self.execute_btn.setEnabled(False)
+        if getattr(self, 'is_loading_file', False):
+            self.load_file_btn.setEnabled(False)
+
     def execute_query(self):
         query = self.sql_editor.toPlainText().strip()
         if not query: return
         
         self.status_label.setText("Executing query...")
-        QApplication.processEvents()
+        self.set_ui_loading_state(True, operation="query")
+        self.loading_dots = 0
+        self.current_loading_file = "query"
+        self.query_start_time = time.time()
+        self.loading_timer.start(400)
         
-        try:
-            total_rows = self.db.get_custom_query_total_rows(query)
+        worker = QueryExecutionWorker(self.db, query)
+        worker.signals.finished.connect(self._on_query_execution_finished)
+        self.threadpool.start(worker)
+
+    @pyqtSlot(bool, int, str, str)
+    def _on_query_execution_finished(self, success, total_rows, err_msg, query):
+        self.loading_timer.stop()
+        self.set_ui_loading_state(False)
+        
+        elapsed = time.time() - getattr(self, 'query_start_time', time.time())
+        
+        if not success:
+            if 'Interrupt' in err_msg or 'interrupt' in err_msg:
+                self.status_label.setText(f"Query canceled after {elapsed:.5f}s.")
+            else:
+                QMessageBox.critical(self, "Query Error", err_msg)
+                self.status_label.setText(f"Error executing query (failed after {elapsed:.5f}s).")
+            return
+
+        if total_rows == 0:
+            self.status_label.setText(f"Query returned 0 rows in {elapsed:.5f}s.")
+            self.table_view.setModel(None)
+            return
             
-            if total_rows == 0:
-                self.status_label.setText("Query returned 0 rows.")
-                self.table_view.setModel(None)
-                return
-                
+        try:
             self.model = CSVTableModel(self.db, query, total_rows)
             self.table_view.setModel(self.model)
             # Remove resizeColumnsToContents to prevent UI freeze on large datasets
@@ -632,7 +714,7 @@ class MainWindow(QMainWindow):
                 if self.table_view.columnWidth(i) < min_width:
                     self.table_view.setColumnWidth(i, min_width)
             
-            self.status_label.setText(f"Query returned {total_rows} rows.")
+            self.status_label.setText(f"Query returned {total_rows} rows in {elapsed:.5f}s.")
             
             if not self.query_history or self.query_history[0] != query:
                 self.query_history.insert(0, query)

@@ -67,6 +67,13 @@ class CSVDatabase:
             except Exception as e:
                 print(f"Error cleaning up extension temp directory: {e}")
 
+    def interrupt(self):
+        """Interrupts the currently running query on the connection."""
+        try:
+            self.con.interrupt()
+        except Exception as e:
+            print(f"Error interrupting query: {e}")
+
     @staticmethod
     def sanitize_table_name(filename):
         """
@@ -125,6 +132,8 @@ class CSVDatabase:
                     
             return True, table_name
         except Exception as e:
+            if "Interrupt" in str(e) or "interrupted" in str(e).lower():
+                return False, str(e)
             print(f"Notice: CSV fast path load aborted, falling back to safe type recovery. Reason: {e}")
 
         # Pass 2: Safe type recovery for messy CSVs (no data loss for type anomalies)
@@ -200,6 +209,8 @@ class CSVDatabase:
             )
             return True, table_name
         except Exception as e:
+            if "Interrupt" in str(e) or "interrupted" in str(e).lower():
+                return False, str(e)
             print(f"Notice: XLSX fast path load aborted, falling back to safe type recovery. Reason: {e}")
 
         # Pass 2: column-level type recovery.
@@ -256,7 +267,9 @@ class CSVDatabase:
                     if fail_count == 0:
                         chosen_type = t
                         break
-                except Exception:
+                except Exception as e:
+                    if "Interrupt" in str(e) or "interrupted" in str(e).lower():
+                        raise e
                     continue
 
             if chosen_type:
@@ -318,7 +331,7 @@ class CSVDatabase:
             return result[0] if result else 0
         except Exception as e:
             print(f"Error counting rows: {e}")
-            return 0
+            raise e
 
     def execute_custom_query(self, query, limit=500, offset=0, sort_col=None, sort_dir="ASC"):
         """

@@ -119,3 +119,26 @@ class XlsxLoadWorker(QRunnable):
                 return
 
         self.signals.finished.emit(True, ", ".join(loaded_tables), self.file_path)
+
+# ---------------------------------------------------------------------------
+# Query Execution Worker
+# ---------------------------------------------------------------------------
+
+class QueryExecutionSignals(QObject):
+    # success, total_rows, error_msg, query
+    finished = pyqtSignal(bool, int, str, str)
+
+class QueryExecutionWorker(QRunnable):
+    def __init__(self, db, query):
+        super().__init__()
+        self.db = db
+        self.query = query
+        self.signals = QueryExecutionSignals()
+
+    @pyqtSlot()
+    def run(self):
+        try:
+            total_rows = self.db.get_custom_query_total_rows(self.query)
+            self.signals.finished.emit(True, total_rows, "", self.query)
+        except Exception as e:
+            self.signals.finished.emit(False, 0, str(e), self.query)
