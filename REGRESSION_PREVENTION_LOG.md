@@ -52,7 +52,9 @@ During development, several critical bottlenecks and crashes were encountered. H
 
 ### Pitfall 7: Messy CSV Ingestion Failures
 - **The Problem:** DuckDB's strict schema inference would fail on CSVs with inconsistent data types or malformed rows, causing load failures.
-- **The Solution:** Implemented robust fallback logic. First, attempt to load with `ignore_errors=true`. If strict inference fails, fallback to loading all columns as `VARCHAR` (`all_varchar=true`) to guarantee ingestion regardless of cleanliness.
+- **The Solution:** Implemented a strict two-pass fallback mechanism.
+  - **Pass 1 (Fast Path):** Attempts `read_csv_auto('{file}')` using the default 20k row sample size. For 99% of massive, well-formed files, this loads instantaneously. We then explicitly check if DuckDB's strict sniffer failed (which happens when structurally malformed rows like `9` columns in an `8` column file exist, causing DuckDB to silently fall back to parsing the file as a single 1-column string). If the resulting table has 1 column and contains delimiter characters in its header, we intentionally throw an exception to trigger the recovery pass.
+  - **Pass 2 (Recovery):** If Pass 1 threw a `Conversion Error` (type anomaly) or our custom sniffer-failure exception, we drop the aborted table and fall back to loading the entire file into a staging table. We use `read_csv_auto(..., all_varchar=true, ignore_errors=true)`. `ignore_errors=true` allows the sniffer to bypass the physically malformed rows and successfully detect the correct delimiter (e.g., `|`). `all_varchar=true` guarantees zero data loss from type anomalies. Physically malformed rows (e.g. 9 columns instead of 8) are dropped by DuckDB, which is correct as they cannot fit the schema. We then probe every column across the entire dataset with `TRY_CAST` to recover its natural type (`BIGINT`, `DOUBLE`, etc.), leaving mixed-type columns safely as `VARCHAR`.
 
 ### Pitfall 8: Cross-Platform Resource Pathing in PyInstaller
 - **The Problem:** When packaged as a single executable, relative paths to images, icons, and QSS stylesheets break. Additionally, Windows paths with backslashes (`\`) break QSS `url()` statements.
@@ -124,7 +126,7 @@ To prevent regressions, adhere to the following rules when modifying this codeba
 
 > [!NOTE]
 > **4. Resource Cleanup**
-> Ensure `CSVDatabase.close()` is always called on exit. Failure to do so will leave multi-gigabyte `.duckdb` temp files stranded in the user's `/tmp` directory.
+> Ensure `CSVDatabase.close()` is always called on exit. Failure to do so will leave multi-gigabyte `.duckdb` temp files and extracted `.zip` extension binaries stranded in the user's `/tmp` directory.
 
 > [!WARNING]
 > **5. Adding New File Format Support**

@@ -96,32 +96,57 @@ class CSVDatabase:
     def load_csv(self, file_path):
         """
         Creates a table from the CSV file.
-        Uses ignore_errors so that values which do not match the auto-detected type
-        are set to NULL rather than aborting the load. Falls back to all VARCHAR
-        only if the file cannot be parsed at all.
+        Attempts a fast-path load using default type inference (samples 20k rows).
+        For extremely large, well-formed CSVs, this is incredibly fast.
+        If a type anomaly exists further down the file (e.g., UUIDs in a numeric column),
+        DuckDB will throw a Conversion Error.
+        If a structurally malformed row exists (e.g., 9 columns instead of 8), the strict
+        sniffer gives up and parses the file as a single column. We detect this by checking
+        if the resulting single column name contains common delimiters.
+        In either failure case, we catch the error and fall back to the safe type-recovery pass.
         """
         table_name = self.sanitize_table_name(file_path)
         escaped_path = file_path.replace("'", "''")
 
+        # Pass 1: Maximum speed native type inference
         try:
             self._drop_object(table_name)
             self.con.execute(
                 f"CREATE TABLE \"{table_name}\" AS SELECT * FROM "
-                f"read_csv_auto('{escaped_path}', ignore_errors=true)"
+                f"read_csv_auto('{escaped_path}')"
             )
+            
+            # Check if sniffer failed and fell back to 1 column
+            schema = self.get_schema(table_name)
+            if len(schema) == 1:
+                col_name = schema[0]['name']
+                if any(char in col_name for char in [',', '|', '\t', ';']):
+                    raise Exception("Sniffer failed to detect delimiter (likely malformed rows).")
+                    
             return True, table_name
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"Notice: CSV fast path load aborted, falling back to safe type recovery. Reason: {e}")
 
+        # Pass 2: Safe type recovery for messy CSVs (no data loss for type anomalies)
+        staging = f"__csv_stage_{table_name}"
         try:
+            self._drop_object(staging)
+            # ignore_errors=true allows the sniffer to ignore malformed rows to find the delimiter.
+            # all_varchar=true prevents any data loss from type inference mismatches.
+            self.con.execute(
+                f"CREATE TABLE \"{staging}\" AS SELECT * FROM "
+                f"read_csv_auto('{escaped_path}', all_varchar=true, ignore_errors=true)"
+            )
+            col_exprs = self._infer_column_casts(staging)
             self._drop_object(table_name)
             self.con.execute(
-                f"CREATE TABLE \"{table_name}\" AS SELECT * FROM "
-                f"read_csv_auto('{escaped_path}', all_varchar=true)"
+                f'CREATE TABLE "{table_name}" AS SELECT {col_exprs} FROM "{staging}"'
             )
             return True, table_name
         except Exception as e:
             return False, str(e)
+        finally:
+            self._drop_object(staging)
 
     # ------------------------------------------------------------------
     # XLSX Loading
@@ -174,8 +199,8 @@ class CSVDatabase:
                 f"read_xlsx('{escaped_path}', sheet='{escaped_sheet}')"
             )
             return True, table_name
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"Notice: XLSX fast path load aborted, falling back to safe type recovery. Reason: {e}")
 
         # Pass 2: column-level type recovery.
         # Load everything as VARCHAR into a staging table to guarantee all rows

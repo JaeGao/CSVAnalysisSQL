@@ -131,7 +131,7 @@ class SQLEditor(QPlainTextEdit):
 
         # Dot-triggered column autocomplete
         if e.text() == '.':
-            table_word = self._word_left_of_dot().lower()
+            table_word = self._word_left_of_dot().lower().replace('"', '')
             # Resolve alias -> real table name, then fall back to direct lookup
             alias_map = self._build_alias_map()
             resolved_table = alias_map.get(table_word, table_word)
