@@ -20,7 +20,7 @@ from editor import SQLEditor
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("SQL Editor Studio - CSV Analyzer")
+        self.setWindowTitle("CSVAnalysisSQL")
         self.setWindowIcon(QIcon(resource_path("icon.png")))
         self.resize(1200, 800)
         
@@ -438,18 +438,24 @@ class MainWindow(QMainWindow):
         words = ["SELECT", "FROM", "WHERE", "GROUP BY", "ORDER BY", "HAVING", "LIMIT", "OFFSET", "JOIN", "LEFT JOIN", "ON", "AS", "COUNT", "SUM", "AVG", "MIN", "MAX", "CASE", "WHEN", "THEN", "ELSE", "END"]
         tables = self.db.get_tables()
         words.extend(tables)
+        schema_map = {}
         for table in tables:
             schema = self.db.get_schema(table)
+            col_completions = []
             for col in schema:
                 col_name = col['name']
                 if not re.match(r'^[a-zA-Z0-9_]+$', col_name):
                     words.append(f'"{col_name}"')
+                    col_completions.append(f'"{col_name}"')
                 else:
                     words.append(col_name)
+                    col_completions.append(col_name)
+            schema_map[table] = col_completions
         
         words = list(set(words))
         words.sort()
         self.sql_editor.set_completions(words)
+        self.sql_editor.set_schema_map(schema_map)
 
     def load_history_item(self, index):
         if index > 0 and index <= len(self.query_history):
