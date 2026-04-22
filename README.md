@@ -113,7 +113,7 @@ The build script installs dependencies, pre-downloads the DuckDB Excel extension
 
 ### Build via GitHub Actions
 
-The repository includes a CI workflow that builds executables for all three platforms automatically. Each platform runner downloads and bundles its own correct DuckDB Excel extension binary.
+The repository includes a CI workflow that builds executables for all three platforms automatically. Each platform runner downloads its correct DuckDB Excel extension binary and bundles it as a `.zip` archive to seamlessly bypass PyInstaller's macOS codesigning pipeline restrictions.
 
 - **Manual trigger:** Go to Actions > Build Executables > Run workflow
 - **Release trigger:** Push a version tag to build and attach binaries to a GitHub Release:
