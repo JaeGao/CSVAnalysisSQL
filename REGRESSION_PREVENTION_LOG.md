@@ -11,7 +11,7 @@ To ensure maintainability and a clean project root, the application uses a modul
 - **`src/workers.py`**: Contains background thread logic (`QRunnable`) to prevent UI blocking. Includes workers for CSV load, XLSX sheet scanning, and XLSX data loading.
 - **`src/models.py`**: Contains the virtualized data model (`CSVTableModel`) for the Qt Table View.
 - **`src/editor.py`**: Encapsulates the custom `SQLEditor` component with advanced autocomplete functionality.
-- **`src/utils.py`**: Contains utility functions like `resource_path()` for cross-platform PyInstaller asset resolution.
+- **`src/utils.py`**: Contains utility functions: `resource_path()` for cross-platform PyInstaller asset resolution, and `get_app_data_dir()` for resolving the writable session temp directory (`csv_analyzer_temp/`) next to the executable.
 - **`src/main.py`**: The application entry point, `MainWindow` UI composition, and `SheetSelectorDialog`.
 - **`src/bundle_ext.py`**: Standalone build utility that pre-downloads the DuckDB Excel extension binary and stages it to `src/extensions/` before PyInstaller runs.
 
@@ -71,6 +71,15 @@ During development, several critical bottlenecks and crashes were encountered. H
 - **The Bundling Solution:** Introduced `src/bundle_ext.py`, a build-time utility script. It calls `INSTALL excel` once during the build process, locates the downloaded binary, and compresses it into `src/extensions/excel_ext.zip` (preserving its native version/platform directory structure). Because it is a zip archive, PyInstaller ignores it during the codesign phase. At runtime, `database.py` extracts this zip into a session-scoped temp directory and sets `extension_directory` to point to it before calling `LOAD excel`. Each CI runner (Windows/macOS/Linux) produces the correct platform-specific zip automatically.
 - **Sheet Name Enumeration:** `openpyxl` is still used, but only to read sheet names via `load_workbook(read_only=True).sheetnames`, which parses only the ZIP manifest, not row data. This is instantaneous regardless of file size. No row-level data ever passes through openpyxl.
 
+### Pitfall 11: Temp File Accumulation on Windows
+- **The Problem:** Each session creates a disk-backed `.duckdb` database file and an extension extraction directory via `tempfile.mktemp()` / `tempfile.mkdtemp()`. On normal exit `close()` is called from `closeEvent` and both are removed. However, if the process is force-killed (Windows Task Manager, crash, SIGKILL) `closeEvent` never fires and the files are stranded in the OS temp directory indefinitely. On Windows, where users are more likely to discover the temp folder, multi-gigabyte orphaned `.duckdb` files accumulate visibly across sessions. DuckDB also writes a `.wal` (write-ahead log) side file alongside the database that was not being deleted even on clean exits.
+- **The Solution:**
+  - **Predictable location:** Replaced `tempfile` with a dedicated `csv_analyzer_temp/` directory placed next to the executable (frozen) or at the project root (dev), managed by `get_app_data_dir()` in `utils.py`. Files are now easy to locate and manually clean up if needed.
+  - **Session-scoped naming:** The `.duckdb` file and extension dir use a short UUID prefix (`csv_analyzer_<8hex>.duckdb`) so multiple concurrent instances never collide.
+  - **Startup cleanup:** `CSVDatabase.cleanup_stale_sessions()` is called once at app launch. It scans `csv_analyzer_temp/` and deletes any `csv_analyzer_*.duckdb` (and `.wal`) files not currently locked by another running instance. On Windows, a locked file raises `OSError`, which is silently skipped — so only orphaned files from dead sessions are removed.
+  - **WAL cleanup:** `close()` now explicitly removes the `.wal` and `.wal.tmp` side files after closing the DuckDB connection.
+  - **`atexit` safety net:** `atexit.register(db.close)` is called in `MainWindow.__init__` as a secondary guarantee. `atexit` fires on clean Python interpreter shutdown (including `Ctrl+C`) even if `closeEvent` is bypassed, providing one extra layer of defense short of a hard process kill.
+
 ---
 
 ## 3. UI/UX and Quality of Life Enhancements
@@ -126,7 +135,7 @@ To prevent regressions, adhere to the following rules when modifying this codeba
 
 > [!NOTE]
 > **4. Resource Cleanup**
-> Ensure `CSVDatabase.close()` is always called on exit. Failure to do so will leave multi-gigabyte `.duckdb` temp files and extracted `.zip` extension binaries stranded in the user's `/tmp` directory.
+> Session temp files (`.duckdb`, `.wal`, extracted extension dir) are stored in `csv_analyzer_temp/` next to the executable. `CSVDatabase.close()` removes them and is called from both `closeEvent` and an `atexit` handler. `cleanup_stale_sessions()` is called at startup to remove orphans from crashed prior sessions. If you add new temp files, delete them in `close()` and handle them in `cleanup_stale_sessions()`.
 
 > [!WARNING]
 > **5. Adding New File Format Support**

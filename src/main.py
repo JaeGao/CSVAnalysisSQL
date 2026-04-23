@@ -4,6 +4,7 @@ import glob
 import json
 import sqlparse
 import time
+import atexit
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QComboBox, QPushButton, QLabel, QTableView, QHeaderView,
@@ -70,7 +71,9 @@ class MainWindow(QMainWindow):
         self.setWindowIcon(QIcon(resource_path("icon.png")))
         self.resize(1200, 800)
         
+        CSVDatabase.cleanup_stale_sessions()
         self.db = CSVDatabase()
+        atexit.register(self.db.close)
         if getattr(sys, 'frozen', False):
             app_dir = os.path.dirname(sys.executable)
         else:

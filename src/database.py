@@ -1,20 +1,50 @@
 import duckdb
 import os
 import shutil
-import tempfile
 import zipfile
 import re
+import uuid
 
-from utils import resource_path
+from utils import resource_path, get_app_data_dir
 
 
 class CSVDatabase:
     def __init__(self):
-        # Create a persistent temporary database file to avoid RAM exhaustion
-        self.db_path = tempfile.mktemp(prefix="csv_analyzer_", suffix=".duckdb")
-        self._ext_temp_dir = None
+        data_dir = get_app_data_dir()
+        session_id = uuid.uuid4().hex[:8]
+        self.db_path = os.path.join(data_dir, f"csv_analyzer_{session_id}.duckdb")
+        self._ext_temp_dir = os.path.join(data_dir, f"csv_analyzer_ext_{session_id}")
+        os.makedirs(self._ext_temp_dir, exist_ok=True)
         self.con = duckdb.connect(database=self.db_path, read_only=False)
         self._load_excel_extension()
+
+    @staticmethod
+    def cleanup_stale_sessions():
+        """
+        Removes leftover temp files from sessions that were not cleanly closed
+        (e.g. force-killed or crashed). Files locked by a running session are
+        silently skipped.
+        """
+        try:
+            data_dir = get_app_data_dir()
+            for name in os.listdir(data_dir):
+                path = os.path.join(data_dir, name)
+                if name.startswith("csv_analyzer_") and name.endswith(".duckdb"):
+                    try:
+                        os.remove(path)
+                        for suffix in (".wal", ".wal.tmp"):
+                            side = path + suffix
+                            if os.path.exists(side):
+                                os.remove(side)
+                    except OSError:
+                        pass
+                elif name.startswith("csv_analyzer_ext_") and os.path.isdir(path):
+                    try:
+                        shutil.rmtree(path)
+                    except OSError:
+                        pass
+        except Exception:
+            pass
 
     def _load_excel_extension(self):
         """
@@ -35,7 +65,6 @@ class CSVDatabase:
 
         if os.path.isfile(zip_path):
             try:
-                self._ext_temp_dir = tempfile.mkdtemp(prefix="csv_analyzer_ext_")
                 with zipfile.ZipFile(zip_path, "r") as zf:
                     zf.extractall(self._ext_temp_dir)
                 safe_dir = self._ext_temp_dir.replace("\\", "/")
@@ -58,6 +87,10 @@ class CSVDatabase:
             self.con.close()
             if os.path.exists(self.db_path):
                 os.remove(self.db_path)
+            for suffix in (".wal", ".wal.tmp"):
+                side = self.db_path + suffix
+                if os.path.exists(side):
+                    os.remove(side)
         except Exception as e:
             print(f"Error cleaning up database: {e}")
 

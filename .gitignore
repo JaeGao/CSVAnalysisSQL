@@ -4,3 +4,4 @@ dist/
 build/
 *.spec
 src/extensions/
+csv_analyzer_temp/
