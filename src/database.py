@@ -4,6 +4,8 @@ import shutil
 import tempfile
 import zipfile
 import re
+import sys
+import platform
 
 from utils import resource_path
 
@@ -12,7 +14,6 @@ class CSVDatabase:
     def __init__(self):
         # Create a persistent temporary database file to avoid RAM exhaustion
         self.db_path = tempfile.mktemp(prefix="csv_analyzer_", suffix=".duckdb")
-        self._ext_temp_dir = None
         self.con = duckdb.connect(database=self.db_path, read_only=False)
         self._load_excel_extension()
 
@@ -20,57 +21,89 @@ class CSVDatabase:
         """
         Load the DuckDB Excel extension so that read_xlsx is available.
 
-        The extension is bundled as excel_ext.zip by src/bundle_ext.py to
-        prevent PyInstaller's macOS codesign pipeline from attempting to
-        re-sign the Mach-O plugin file (which it cannot do successfully).
-
-        At runtime the zip is extracted to a session-scoped temp directory
-        that preserves the version/platform subdirectory structure DuckDB
-        expects. extension_directory is then pointed at that base directory.
-
-        Falls back to INSTALL excel for development environments where
-        bundle_ext.py has not been run.
+        The extension is bundled as excel_ext.zip by src/bundle_ext.py.
+        At runtime, it is extracted to a directory next to the executable
+        (or script during dev) to ensure portability and avoid 'Bad Image'
+        errors common when loading DLLs from system Temp directories.
         """
         zip_path = os.path.join(resource_path("extensions"), "excel_ext.zip")
 
         if os.path.isfile(zip_path):
             try:
-                self._ext_temp_dir = tempfile.mkdtemp(prefix="csv_analyzer_ext_")
+                # Determine base directory: executable folder if frozen, else script folder
+                if getattr(sys, 'frozen', False):
+                    base_dir = os.path.dirname(sys.executable)
+                else:
+                    # In development, use the project root (one level up from src)
+                    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+                ext_dir = os.path.join(base_dir, "extensions")
+                os.makedirs(ext_dir, exist_ok=True)
+
+                # Extract if not already present (or force refresh if needed)
+                # For simplicity, we extract all to ensure structure is correct
                 with zipfile.ZipFile(zip_path, "r") as zf:
-                    zf.extractall(self._ext_temp_dir)
-                safe_dir = self._ext_temp_dir.replace("\\", "/")
-                self.con.execute(f"SET extension_directory = '{safe_dir}'")
-                self.con.execute("LOAD excel")
-                return
+                    zf.extractall(ext_dir)
+
+                # Construct the absolute path to the platform-specific extension
+                # 1. Detect DuckDB version
+                v_res = self.con.execute("SELECT version()").fetchone()
+                v_str = v_res[0] if v_res else duckdb.__version__
+                if not v_str.startswith('v'):
+                    v_str = 'v' + v_str
+
+                # 2. Detect platform string (matching DuckDB naming convention)
+                system = platform.system().lower()
+                arch = platform.machine().lower()
+                if arch in ['amd64', 'x86_64']:
+                    plat_arch = 'amd64'
+                elif arch in ['arm64', 'aarch64']:
+                    plat_arch = 'arm64'
+                else:
+                    plat_arch = arch
+
+                if system == 'windows':
+                    plat_name = f"windows_{plat_arch}"
+                    ext_suffix = ".duckdb_extension"
+                elif system == 'darwin':
+                    plat_name = f"osx_{plat_arch}"
+                    ext_suffix = ".duckdb_extension"
+                else:
+                    plat_name = f"linux_{plat_arch}"
+                    ext_suffix = ".duckdb_extension"
+
+                # 3. Target file path
+                target_file = os.path.join(ext_dir, v_str, plat_name, f"excel{ext_suffix}")
+                
+                if os.path.exists(target_file):
+                    # Use absolute path loading and escape single quotes for DuckDB SQL
+                    abs_path = os.path.abspath(target_file).replace("\\", "/")
+                    escaped_path = abs_path.replace("'", "''")
+                    self.con.execute(f"LOAD '{escaped_path}'")
+                    return
+                else:
+                    print(f"Warning: Bundled extension not found for {v_str}/{plat_name}")
+
             except Exception as e:
                 print(f"Warning: Could not load bundled Excel extension: {e}")
-                # Reset extension_directory so INSTALL can work normally if fallback is needed
-                try:
-                    self.con.execute("SET extension_directory = ''")
-                except:
-                    pass
 
-        # Fallback: online install for development or if zip extraction fails.
+        # Fallback: online install for development or if local load fails.
         try:
+            # Clear extension_directory to avoid conflicts
+            self.con.execute("SET extension_directory = ''")
             self.con.execute("INSTALL excel")
             self.con.execute("LOAD excel")
         except Exception as e:
-            print(f"Warning: Could not load DuckDB Excel extension: {e}")
+            print(f"Warning: Could not load DuckDB Excel extension via fallback: {e}")
 
     def close(self):
-        """Clean up the DuckDB connection, temp database file, and extension temp dir."""
+        """Clean up the DuckDB connection and temp database file."""
         try:
             self.con.close()
             if os.path.exists(self.db_path):
                 os.remove(self.db_path)
         except Exception as e:
             print(f"Error cleaning up database: {e}")
-
-        if self._ext_temp_dir and os.path.exists(self._ext_temp_dir):
-            try:
-                shutil.rmtree(self._ext_temp_dir)
-            except Exception as e:
-                print(f"Error cleaning up extension temp directory: {e}")
 
     def interrupt(self):
         """Interrupts the currently running query on the connection."""

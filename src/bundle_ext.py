@@ -27,14 +27,11 @@ def bundle_extensions():
     print("Detecting DuckDB version...")
     con = duckdb.connect()
     try:
-        # Get the internal version string (e.g., "v1.1.0")
-        v_str = con.execute("SELECT library_version FROM duckdb_extensions() LIMIT 1").fetchone()[0]
+        # Get the internal version string (e.g., "1.1.0")
+        v_res = con.execute("SELECT version()").fetchone()
+        v_str = v_res[0] if v_res else duckdb.__version__
         if not v_str.startswith('v'):
             v_str = 'v' + v_str
-    except Exception as e:
-        print(f"Error detecting version: {e}")
-        # Fallback to duckdb.__version__ with 'v' prefix
-        v_str = 'v' + duckdb.__version__
     finally:
         con.close()
 
