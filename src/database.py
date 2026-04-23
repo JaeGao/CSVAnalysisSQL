@@ -44,6 +44,11 @@ class CSVDatabase:
                 return
             except Exception as e:
                 print(f"Warning: Could not load bundled Excel extension: {e}")
+                # Reset extension_directory so INSTALL can work normally if fallback is needed
+                try:
+                    self.con.execute("SET extension_directory = ''")
+                except:
+                    pass
 
         # Fallback: online install for development or if zip extraction fails.
         try:
