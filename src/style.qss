@@ -230,6 +230,110 @@ QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
     background: none;
 }
 
+/* Menu Bar */
+QMenuBar {
+    background-color: #F8F9FA;
+    border-bottom: 1px solid #DEE2E6;
+    padding: 2px 4px;
+}
+
+QMenuBar::item {
+    background-color: transparent;
+    padding: 4px 10px;
+    border-radius: 3px;
+}
+
+QMenuBar::item:selected {
+    background-color: #E9ECEF;
+}
+
+QMenu {
+    background-color: #FFFFFF;
+    border: 1px solid #CED4DA;
+    border-radius: 4px;
+    padding: 4px 0px;
+}
+
+QMenu::item {
+    padding: 5px 24px 5px 16px;
+}
+
+QMenu::item:selected {
+    background-color: #0D6EFD;
+    color: #FFFFFF;
+}
+
+QMenu::separator {
+    height: 1px;
+    background-color: #DEE2E6;
+    margin: 3px 8px;
+}
+
+/* Tab Widget */
+QTabWidget::pane {
+    border: 1px solid #DEE2E6;
+    border-top: none;
+    background-color: #F8F9FA;
+}
+
+QTabBar::tab {
+    background-color: #E9ECEF;
+    color: #495057;
+    border: 1px solid #DEE2E6;
+    border-bottom: none;
+    border-top-left-radius: 4px;
+    border-top-right-radius: 4px;
+    /* right padding leaves breathing room next to the × close button */
+    padding: 5px 6px 5px 12px;
+    margin-right: 2px;
+    min-width: 80px;
+}
+
+QTabBar::tab:selected {
+    background-color: #F8F9FA;
+    color: #212529;
+    font-weight: bold;
+    border-bottom: 1px solid #F8F9FA;
+}
+
+QTabBar::tab:hover:!selected {
+    background-color: #DEE2E6;
+}
+
+/* "+" tab is always last */
+QTabBar::tab:last {
+    min-width: 32px;
+    padding: 5px 10px;
+    color: #6C757D;
+    font-weight: bold;
+    font-size: 15px;
+    background-color: transparent;
+    border-color: transparent;
+}
+
+QTabBar::tab:last:hover {
+    background-color: #DEE2E6;
+    border-color: #DEE2E6;
+    color: #212529;
+}
+
+/* Custom × close button on each real tab */
+QPushButton#tabCloseBtn {
+    background-color: transparent;
+    color: #868E96;
+    border: none;
+    border-radius: 3px;
+    font-size: 14px;
+    font-weight: bold;
+    padding: 0px;
+    margin: 0px 2px;
+}
+
+QPushButton#tabCloseBtn:hover {
+    background-color: #CED4DA;
+    color: #212529;
+}
+
 /* Scrollbars - Horizontal */
 QScrollBar:horizontal {
     border: none;
