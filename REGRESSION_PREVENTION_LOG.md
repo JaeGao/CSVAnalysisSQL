@@ -12,7 +12,8 @@ To ensure maintainability and a clean project root, the application uses a modul
 - **`src/models.py`**: Contains the virtualized data model (`CSVTableModel`) for the Qt Table View.
 - **`src/editor.py`**: Encapsulates the custom `SQLEditor` component with advanced autocomplete functionality.
 - **`src/utils.py`**: Contains utility functions: `resource_path()` for cross-platform PyInstaller asset resolution, and `get_app_data_dir()` for resolving the writable session temp directory (`csv_analyzer_temp/`) next to the executable.
-- **`src/main.py`**: The application entry point, `MainWindow` UI composition, and `SheetSelectorDialog`.
+- **`src/tab.py`**: Self-contained `QueryTab` widget. Each instance owns a SQL editor, results table, query history, loading timer, and execute/cancel state. Receives only `db` and `threadpool` references from `MainWindow`. Exposes `schema_changed` signal for `MainWindow` to react to view saves.
+- **`src/main.py`**: The application entry point, `MainWindow` UI composition, `SheetSelectorDialog`, and `WorkspaceManagerDialog`.
 - **`src/bundle_ext.py`**: Standalone build utility that pre-downloads the DuckDB Excel extension binary and stages it to `src/extensions/` before PyInstaller runs.
 
 ---
@@ -80,20 +81,49 @@ During development, several critical bottlenecks and crashes were encountered. H
   - **WAL cleanup:** `close()` now explicitly removes the `.wal` and `.wal.tmp` side files after closing the DuckDB connection.
   - **`atexit` safety net:** `atexit.register(db.close)` is called in `MainWindow.__init__` as a secondary guarantee. `atexit` fires on clean Python interpreter shutdown (including `Ctrl+C`) even if `closeEvent` is bypassed, providing one extra layer of defense short of a hard process kill.
 
+### Pitfall 12: Multi-Tab Threading and Close Safety
+- **The Problem:** Adding a `QTabWidget` introduced several subtle failure modes:
+  1. **Invisible close button**: Qt's built-in `setTabsClosable(True)` close button does not render visibly on all Linux desktop environments.
+  2. **Close spawns new tab**: When the user closes the currently-selected tab and the adjacent tab is the `"+"` placeholder, Qt auto-selects `"+"` after `removeTab()`, which fires `currentChanged` → `_on_tab_changed` → `_add_tab()`, immediately creating an unwanted new tab.
+  3. **Monotonically increasing names**: Replacing a `_tab_counter` integer means closed-then-reopened tabs never reuse freed numbers (e.g., closing `Query 2` then adding a tab produces `Query 4`).
+  4. **`_clear_session()` spurious tab creation**: When `_clear_session` removes all real tabs in reverse order, Qt selects the `"+"` placeholder during removal, triggering `_add_tab()` mid-clear.
+- **The Solutions:**
+  1. Set `setTabsClosable(False)` and add a custom `QPushButton("×")` per tab via `tabBar().setTabButton(idx, RightSide, close_btn)`. The button uses `objectName("tabCloseBtn")` for QSS styling. Its `clicked` lambda captures the specific `QueryTab` widget (not an index) so `_close_tab_by_widget` calls `indexOf()` to get a stable index even after reordering.
+  2. In `_close_tab()`, pre-select a different real tab via `setCurrentIndex(safe)` **before** calling `removeTab()` so Qt never auto-selects `"+"`.
+  3. Replace `_tab_counter` with `_next_tab_name()`, which scans `tabText()` for `"Query N"` labels and returns the lowest unused integer.
+  4. Wrap `_clear_session()`'s removal loop in `self._in_add_tab = True` (with `try/finally`). `_on_tab_changed` checks this flag and skips `_add_tab()` when it is set.
+
+### Pitfall 13: Workspace Restore Race and Status Feedback
+- **The Problem:** When a workspace is loaded, files must be re-ingested sequentially (each load is async). Simply re-using `_start_csv_load` / `_start_xlsx_load` provided no indication of overall progress — the status label showed only the single current file name with no count.
+- **The Solution:** `_restore_workspace` records `self._restore_total = len(queue)` before starting. `_restore_next_file` computes `current = _restore_total - len(remaining_queue)` after each pop and immediately overwrites the generic loading message (set inside `_start_csv_load`) with `"Loading file {current} of {_restore_total}: {basename}…"`. When the queue is empty, the last file's normal completion message is shown.
+
 ---
 
 ## 3. UI/UX and Quality of Life Enhancements
 
 The application prioritizes user experience and rapid iteration through several key features:
+- **Multi-Tab Editor**: The query area is a `QTabWidget` where each tab is a fully independent `QueryTab` instance with its own SQL editor, results table, query history dropdown, status label, and execute/cancel state. Tabs share the same DuckDB connection and threadpool.
+  - **Add tab**: Click the permanent **+** tab (always last). It is a plain `QWidget` placeholder — clicking it fires `_on_tab_changed` → `_add_tab()`.
+  - **Close tab**: Each real tab has a custom `QPushButton("×")` placed via `tabBar().setTabButton()` with `objectName("tabCloseBtn")` for QSS styling. The last remaining tab cannot be closed.
+  - **Rename tab**: Double-click a tab label.
+  - **Naming**: `_next_tab_name()` scans existing tab labels for `"Query N"` patterns and returns the lowest unused number, so closing and reopening tabs never produces monotonically increasing names.
+  - **Safe close**: `_close_tab()` pre-selects a different real tab before calling `removeTab()` so Qt never auto-selects the `"+"` placeholder (which would trigger `_add_tab()` again).
+  - **`_in_add_tab` guard**: A boolean flag prevents recursive `_add_tab()` calls during both the "+" click path and `_clear_session()` tab removal.
+- **Workspace Persistence**: Named workspaces are stored as JSON files in a `workspaces/` directory next to the executable.
+  - Each workspace records the absolute path and type of every loaded file (plus selected sheets for XLSX), and the name and SQL content of every open tab.
+  - Workspaces are never auto-loaded on startup. The user selects one via **Workspace → Open / Manage…** (`WorkspaceManagerDialog`).
+  - On restore, tabs are reconstructed first (so the UI is immediately usable), then files are re-loaded sequentially via `_restore_next_file()`. The active tab's status label shows `"Loading file X of Y: filename…"` while the queue drains.
+  - `_clear_session()` drops all DuckDB tables, removes all `QueryTab` widgets, and resets loaded-file tracking before a new workspace is applied.
+- **Inline Status Label**: The `QMainWindow` status bar is hidden. All status messages (query timing, row counts, file load progress, clipboard confirmations, workspace saves) are written to the current tab's `status_label` — a centered `QLabel` in the action row between the SQL editor and the Export/Execute buttons. `MainWindow._set_status(msg)` routes messages to `current_tab().set_status(msg)`.
 - **Advanced SQL Toolbar**: Removed basic SQL snippet buttons in favor of robust utilities:
   - **Format**: Leverages `sqlparse` to prettify complex, nested queries instantly.
   - **Query History**: Automatically tracks successful queries during a session in a dropdown, allowing rapid iteration without losing work.
   - **Save as View**: Immediately creates a virtual table (`CREATE OR REPLACE VIEW`) from the current query and loads it into the schema tree for downstream analysis.
   - **Execute Shortcut**: Standardized `Ctrl+Enter` and `F5` shortcuts to execute queries without UI interaction.
-- **Smart Autocomplete**: The `SQLEditor` continuously provides context-aware autocomplete suggestions (columns, tables, SQL keywords) dynamically as the user types. It uses an exact-prefix replacement algorithm to maintain correct casing and preserve quoted identifiers seamlessly.
+- **Smart Autocomplete**: The `SQLEditor` continuously provides context-aware autocomplete suggestions (columns, tables, SQL keywords) dynamically as the user types. It uses an exact-prefix replacement algorithm to maintain correct casing and preserve quoted identifiers seamlessly. Autocomplete is pushed to all open tabs whenever the schema changes.
 - **Dynamic Layouts**: The `Schema Tree` enforces a clean `60/40` width ratio between the "Column Name" and "Type" headers. It also supports `ExtendedSelection` allowing users to select and copy multiple columns at once.
 - **Contextual Actions**: Right-clicking columns in the Schema Tree allows for one-click copying of exact column names directly to the clipboard.
-- **Consistent Styling**: Customized QSS prevents default dotted-outlines on Windows tables/trees and ensures inactive selection colors remain visible and professional.
+- **Consistent Styling**: Customized QSS prevents default dotted-outlines on Windows tables/trees and ensures inactive selection colors remain visible and professional. The `"+"` tab uses transparent borders and a larger font weight to distinguish it visually from real query tabs.
 
 ---
 

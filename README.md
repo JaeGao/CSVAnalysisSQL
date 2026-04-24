@@ -12,12 +12,15 @@ Load multi-gigabyte CSV or XLSX files, write SQL queries with autocomplete, and 
 - **Unlimited file size** -- DuckDB processes data on disk, so files of any size can be loaded without exhausting RAM.
 - **Full SQL support** -- Write analytical queries with `GROUP BY`, `ROLLUP`, `CASE WHEN`, window functions, and more.
 - **Instant scrolling** -- A virtualized table model lazily fetches only the rows visible on screen. Scrolling through 50 million rows is instantaneous.
+- **Multi-tab editor** -- Open multiple SQL editor tabs simultaneously, each with its own query, results table, query history, and execute state. Add tabs with the **+** button, close with **×**, rename with a double-click.
+- **Workspace persistence** -- Save the current session (loaded files + all open tabs and their SQL) as a named workspace. Reload it later from **Workspace → Open / Manage…**. Workspaces are stored as JSON files and are never auto-loaded on startup.
 - **Multi-dataset workspace** -- Load multiple files simultaneously and `JOIN` across them, including across sheets from the same workbook.
 - **SQL autocomplete** -- Press `Ctrl+Space` for context-aware completions of SQL keywords, table names, and column names. Column names with special characters are automatically quoted.
-- **Schema browser** -- Inspect loaded tables and their column types in a collapsible tree view. Right-click to copy a table's `CREATE TABLE` statement.
+- **Schema browser** -- Inspect loaded tables and their column types in a collapsible tree view. Right-click to copy a table's `CREATE TABLE` statement, query its top 500 rows, or remove it.
 - **Saved scripts** -- Save frequently used queries and load them with a double-click.
 - **CSV export** -- Export query results directly to disk at native speed using DuckDB's `COPY` command.
 - **Non-blocking UI** -- File loading and data fetching run on background threads. The interface never freezes.
+- **Inline status** -- All status messages (query timing, row counts, load progress) appear in a centered label within each tab, directly below the SQL editor. No separate status bar.
 - **Clean light theme** -- A polished Qt stylesheet with clear typography and subtle hover states.
 
 ---
@@ -66,6 +69,9 @@ No Python installation required. Just download and run.
 3. **Execute** -- Press **F5** or `Ctrl+Enter`. Results appear in the table below.
 4. **Sort** -- Click any column header to sort results. Sorting is handled server-side by DuckDB for maximum speed.
 5. **Export** -- Click **Export Results** to save the current query output as a CSV file.
+6. **Manage tabs** -- Click **+** to open a new tab. Click **×** on a tab to close it (the last tab cannot be closed). Double-click a tab label to rename it.
+7. **Save a workspace** -- Go to **Workspace → Save** (`Ctrl+S`) to save the current loaded files and all open tabs. Use **Save As…** to name a new workspace.
+8. **Open a workspace** -- Go to **Workspace → Open / Manage…** to browse saved workspaces. Double-click or click **Open** to restore. Files are reloaded in sequence with progress shown in the active tab's status area.
 
 ### Example Query
 
@@ -85,7 +91,8 @@ ORDER BY Store
 ## Architecture
 
 ```
-main.py          -- Application entry point, MainWindow, SheetSelectorDialog
+main.py          -- Application entry point, MainWindow, SheetSelectorDialog, WorkspaceManagerDialog
+tab.py           -- Self-contained QueryTab widget (SQL editor, results table, history, execute state)
 database.py      -- DuckDB wrapper: load CSV/XLSX, query, schema, export
 models.py        -- Virtualized QAbstractTableModel with lazy chunk loading
 workers.py       -- Background QRunnable workers: CSV load, XLSX scan, XLSX load
