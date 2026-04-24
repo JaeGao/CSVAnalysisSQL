@@ -299,7 +299,11 @@ class MainWindow(QMainWindow):
         self.table_view.horizontalHeader().setStretchLastSection(True)
         self.table_view.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         self.table_view.setSortingEnabled(True)
-        
+        self.table_view.setCornerButtonEnabled(False)
+
+        copy_shortcut = QShortcut(QKeySequence.StandardKey.Copy, self.table_view)
+        copy_shortcut.activated.connect(self._copy_table_selection)
+
         parent_splitter.addWidget(self.table_view)
         parent_splitter.setStretchFactor(0, 40)
         parent_splitter.setStretchFactor(1, 60)
@@ -615,6 +619,19 @@ class MainWindow(QMainWindow):
     def copy_query(self):
         QApplication.clipboard().setText(self.sql_editor.toPlainText())
         self.status_label.setText("Query copied to clipboard.")
+
+    def _copy_table_selection(self):
+        indexes = self.table_view.selectedIndexes()
+        if not indexes:
+            return
+        rows = sorted(set(i.row() for i in indexes))
+        cols = sorted(set(i.column() for i in indexes))
+        model = self.table_view.model()
+        lines = []
+        for row in rows:
+            cells = [str(model.index(row, col).data() or '') for col in cols]
+            lines.append('\t'.join(cells))
+        QApplication.clipboard().setText('\n'.join(lines))
 
     def save_as_view(self):
         query = self.sql_editor.toPlainText().strip()
